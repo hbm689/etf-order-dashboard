@@ -58,6 +58,8 @@ type Quote = {
   bid: number;
   ask: number;
   previousClose: number;
+  tradingDate: string;
+  previousTradingDate: string;
 };
 
 type Settings = {
@@ -100,19 +102,36 @@ type PersistedState = {
   settings: Settings;
 };
 
+type MarketContext = {
+  timezone: string;
+  marketDate: string;
+  latestTradingDate: string | null;
+  previousTradingDate: string | null;
+  lastClosedStart: string | null;
+  lastClosedEnd: string | null;
+  lastClosedNote: string | null;
+};
+
 type QuoteApiResponse =
   | Record<string, Quote>
   | {
       quotes?: Record<string, Quote>;
       debug?: Record<string, string>;
       error?: string;
+      marketContext?: MarketContext;
     };
+
+type QuoteCachePayload = {
+  quotes: Record<string, Quote>;
+  marketContext: MarketContext | null;
+  cachedAt: string;
+};
 
 const STORAGE_KEY = "etf_order_dashboard_v2";
 
 const DEFAULT_SETTINGS: Settings = {
-  marketWindowStart: "22:00",
-  marketWindowEnd: "23:00",
+  marketWindowStart: "08:00",
+  marketWindowEnd: "13:00",
   defaultCurrency: "USD",
   useDemoData: false,
   autoRefreshSeconds: 0,
@@ -164,6 +183,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     bid: 228.95,
     ask: 229.18,
     previousClose: 230.97,
+    tradingDate: "2026-04-17",
+    previousTradingDate: "2026-04-16",
   },
   UFO: {
     price: 54.7,
@@ -172,6 +193,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     bid: 54.61,
     ask: 54.82,
     previousClose: 53.42,
+    tradingDate: "2026-04-17",
+    previousTradingDate: "2026-04-16",
   },
   SCHD: {
     price: 30.81,
@@ -180,6 +203,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     bid: 30.8,
     ask: 30.82,
     previousClose: 30.74,
+    tradingDate: "2026-04-17",
+    previousTradingDate: "2026-04-16",
   },
   DTCR: {
     price: 27.5,
@@ -188,6 +213,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     bid: 27.45,
     ask: 27.53,
     previousClose: 27.2,
+    tradingDate: "2026-04-17",
+    previousTradingDate: "2026-04-16",
   },
   SOXX: {
     price: 241.6,
@@ -196,22 +223,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     bid: 241.42,
     ask: 241.75,
     previousClose: 237.1,
-  },
-  AIQ: {
-    price: 39.25,
-    changePct: 0.75,
-    volume: 87620,
-    bid: 39.21,
-    ask: 39.3,
-    previousClose: 38.96,
-  },
-  USMV: {
-    price: 96.42,
-    changePct: -0.18,
-    volume: 341290,
-    bid: 96.39,
-    ask: 96.45,
-    previousClose: 96.59,
+    tradingDate: "2026-04-17",
+    previousTradingDate: "2026-04-16",
   },
 };
 
@@ -281,7 +294,7 @@ function calcSignal(
       label: "資料不足",
       tone: "bg-slate-100 text-slate-700 border-slate-200",
       icon: AlertTriangle,
-      reason: "尚未取得報價資料。",
+      reason: "尚未取得最新交易日資料。",
       score: 0,
     };
   }
@@ -303,7 +316,7 @@ function calcSignal(
       label: "先等等",
       tone: "bg-amber-50 text-amber-800 border-amber-200",
       icon: AlertTriangle,
-      reason: "買賣價差偏大，較容易買在不理想的位置。",
+      reason: "收盤資料已更新，但價差估算偏大，先觀察即可。",
       score,
     };
   }
@@ -313,7 +326,7 @@ function calcSignal(
       label: "可考慮下單",
       tone: "bg-emerald-50 text-emerald-800 border-emerald-200",
       icon: CheckCircle2,
-      reason: "價格接近理想買點，短線動能未過熱。",
+      reason: "前次收盤價格接近理想買點，短線未明顯過熱。",
       score,
     };
   }
@@ -323,7 +336,7 @@ function calcSignal(
       label: "不宜追價",
       tone: "bg-rose-50 text-rose-800 border-rose-200",
       icon: TrendingUp,
-      reason: "已高於理想買點，且日內動能偏熱。",
+      reason: "前次收盤已高於理想買點，且上一交易日動能偏熱。",
       score,
     };
   }
@@ -332,7 +345,7 @@ function calcSignal(
     label: "觀察中",
     tone: "bg-sky-50 text-sky-800 border-sky-200",
     icon: Eye,
-    reason: "價格尚可，但還沒到最漂亮的切入點。",
+    reason: "已有最新交易日資料，但尚未到最佳切入區。",
     score,
   };
 }
@@ -367,18 +380,35 @@ function randomizeQuote(quote: Quote): Quote {
 
 function isWrappedQuoteResponse(
   payload: QuoteApiResponse,
-): payload is { quotes?: Record<string, Quote>; debug?: Record<string, string>; error?: string } {
+): payload is {
+  quotes?: Record<string, Quote>;
+  debug?: Record<string, string>;
+  error?: string;
+  marketContext?: MarketContext;
+} {
   return (
     typeof payload === "object" &&
     payload !== null &&
-    ("quotes" in payload || "debug" in payload || "error" in payload)
+    ("quotes" in payload || "debug" in payload || "error" in payload || "marketContext" in payload)
   );
+}
+
+function getDemoMarketContext(): MarketContext {
+  return {
+    timezone: "America/New_York",
+    marketDate: "2026-04-20",
+    latestTradingDate: "2026-04-17",
+    previousTradingDate: "2026-04-16",
+    lastClosedStart: "2026-04-18",
+    lastClosedEnd: "2026-04-20",
+    lastClosedNote: "2026-04-18 ~ 2026-04-20（最近非交易日 / 休市區間）",
+  };
 }
 
 async function fetchQuotes(
   symbols: string[],
   useDemoData: boolean,
-): Promise<Record<string, Quote>> {
+): Promise<{ quotes: Record<string, Quote>; marketContext: MarketContext | null }> {
   if (useDemoData) {
     const result: Record<string, Quote> = {};
 
@@ -388,7 +418,10 @@ async function fetchQuotes(
       }
     });
 
-    return result;
+    return {
+      quotes: result,
+      marketContext: getDemoMarketContext(),
+    };
   }
 
   const response = await fetch(
@@ -411,10 +444,16 @@ async function fetchQuotes(
       console.warn("quotes debug", payload.debug);
     }
 
-    return payload.quotes || {};
+    return {
+      quotes: payload.quotes || {},
+      marketContext: payload.marketContext || null,
+    };
   }
 
-  return payload as Record<string, Quote>;
+  return {
+    quotes: payload as Record<string, Quote>,
+    marketContext: null,
+  };
 }
 
 export default function ETFOrderDashboard() {
@@ -422,6 +461,7 @@ export default function ETFOrderDashboard() {
   const [watchlist, setWatchlist] = useState<WatchItem[]>(initial.watchlist);
   const [settings, setSettings] = useState<Settings>(initial.settings);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
@@ -453,9 +493,10 @@ export default function ETFOrderDashboard() {
       if (!force && typeof window !== "undefined") {
         const cached = window.localStorage.getItem(cacheKey);
         if (cached) {
-          const parsed = JSON.parse(cached) as Record<string, Quote>;
-          setQuotes(parsed);
-          setLastUpdated(new Date());
+          const parsed = JSON.parse(cached) as QuoteCachePayload;
+          setQuotes(parsed.quotes || {});
+          setMarketContext(parsed.marketContext || null);
+          setLastUpdated(parsed.cachedAt ? new Date(parsed.cachedAt) : new Date());
           setLoading(false);
           return;
         }
@@ -463,22 +504,30 @@ export default function ETFOrderDashboard() {
 
       const data = await fetchQuotes(symbols, settings.useDemoData);
 
-      if (Object.keys(data).length === 0 && typeof window !== "undefined") {
+      if (Object.keys(data.quotes).length === 0 && typeof window !== "undefined") {
         const cached = window.localStorage.getItem(cacheKey);
         if (cached) {
-          const parsed = JSON.parse(cached) as Record<string, Quote>;
-          setQuotes(parsed);
-          setLastUpdated(new Date());
+          const parsed = JSON.parse(cached) as QuoteCachePayload;
+          setQuotes(parsed.quotes || {});
+          setMarketContext(parsed.marketContext || null);
+          setLastUpdated(parsed.cachedAt ? new Date(parsed.cachedAt) : new Date());
           setLoading(false);
           return;
         }
       }
 
-      setQuotes(data);
-      setLastUpdated(new Date());
+      const now = new Date();
+      setQuotes(data.quotes);
+      setMarketContext(data.marketContext);
+      setLastUpdated(now);
 
-      if (typeof window !== "undefined" && Object.keys(data).length > 0) {
-        window.localStorage.setItem(cacheKey, JSON.stringify(data));
+      if (typeof window !== "undefined" && Object.keys(data.quotes).length > 0) {
+        const cachePayload: QuoteCachePayload = {
+          quotes: data.quotes,
+          marketContext: data.marketContext,
+          cachedAt: now.toISOString(),
+        };
+        window.localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
       }
     } catch (error) {
       console.error(error);
@@ -534,7 +583,7 @@ export default function ETFOrderDashboard() {
   }, [enriched]);
 
   const now = new Date();
-  const marketWindow = isInsideWindow(
+  const reviewWindow = isInsideWindow(
     now,
     settings.marketWindowStart,
     settings.marketWindowEnd,
@@ -625,7 +674,7 @@ export default function ETFOrderDashboard() {
           <div className="space-y-3">
             <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-sm text-slate-600">
               <Database className="h-4 w-4" />
-              美股 ETF 下單監看站
+              美股 ETF 下單複盤站
             </div>
 
             <div>
@@ -633,8 +682,7 @@ export default function ETFOrderDashboard() {
                 正式可上線的每日觀察面板
               </h1>
               <p className="mt-3 max-w-3xl text-slate-600 leading-7">
-                這個版本已具備你要的核心結構：可新增觀察標的、儲存自訂買點與股數、每日刷新報價、計算預估成交金額，
-                並依你的規則判斷是否適合下單。目前讀取你自己的 /api/quotes，之後把真實報價來源接進去即可。
+                這個版本已改成以最新交易日資料為主的複盤模式。你可以在早上或中午查看上一個交易日的收盤、成交量與距離理想買點的關係，不需要熬夜盯盤。
               </p>
             </div>
           </div>
@@ -751,27 +799,63 @@ export default function ETFOrderDashboard() {
             title="目前可考慮下單"
             value={`${summary.ready} 檔`}
             icon={CheckCircle2}
-            sub="依你的買點與日內狀態判斷"
+            sub="依前次收盤與理想買點判斷"
           />
           <InfoCard
             title="偏熱不宜追價"
             value={`${summary.hot} 檔`}
             icon={TrendingUp}
-            sub="日內動能過熱或高於理想價"
+            sub="以前次交易日漲跌與位置判斷"
           />
           <InfoCard
             title="預估總成交金額"
             value={`$${formatNumber(summary.totalAmount, 2)}`}
             icon={DollarSign}
-            sub="依目前價格 × 預計股數"
+            sub="以前次收盤 × 預計股數估算"
           />
           <InfoCard
-            title="最佳觀察時段"
+            title="建議複盤時段"
             value={`${settings.marketWindowStart}–${settings.marketWindowEnd}`}
             icon={Clock3}
-            sub={marketWindow ? "現在就在你的主要判斷時段內" : "現在不在主要判斷時段內"}
+            sub={reviewWindow ? "現在在你設定的複盤時段內" : "現在不在主要複盤時段內"}
           />
         </section>
+
+        <Card className="rounded-3xl border-slate-200 shadow-sm">
+          <CardContent className="p-5">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-slate-500">最新交易日（美東）</div>
+                <div className="mt-2 text-lg font-semibold">
+                  {marketContext?.latestTradingDate ?? "—"}
+                </div>
+                <div className="mt-2 text-slate-500">
+                  目前畫面資料所對應的前次交易日日期
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-slate-500">前一交易日（美東）</div>
+                <div className="mt-2 text-lg font-semibold">
+                  {marketContext?.previousTradingDate ?? "—"}
+                </div>
+                <div className="mt-2 text-slate-500">
+                  用來計算前次交易日漲跌幅
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-slate-50 p-4">
+                <div className="text-slate-500">最近休市區間</div>
+                <div className="mt-2 text-lg font-semibold">
+                  {marketContext?.lastClosedNote ?? "無"}
+                </div>
+                <div className="mt-2 text-slate-500">
+                  用來確認週末或休市造成的資料日期差異
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <Tabs defaultValue="watchlist" className="space-y-4">
           <TabsList className="rounded-2xl bg-white border border-slate-200">
@@ -789,7 +873,7 @@ export default function ETFOrderDashboard() {
           <TabsContent value="watchlist" className="space-y-4">
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>今日觀察清單</CardTitle>
+                <CardTitle>最新交易日觀察清單</CardTitle>
                 <CardDescription>
                   最後更新：{lastUpdated ? lastUpdated.toLocaleString() : "尚未刷新"}
                 </CardDescription>
@@ -797,17 +881,18 @@ export default function ETFOrderDashboard() {
 
               <CardContent>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left min-w-[980px]">
+                  <table className="w-full text-left min-w-[1100px]">
                     <thead className="text-sm text-slate-500 border-b border-slate-200">
                       <tr>
                         <th className="py-3 pr-4 font-medium">標的</th>
                         <th className="py-3 pr-4 font-medium">主題</th>
-                        <th className="py-3 pr-4 font-medium">現價</th>
+                        <th className="py-3 pr-4 font-medium">資料日期</th>
+                        <th className="py-3 pr-4 font-medium">前次收盤</th>
                         <th className="py-3 pr-4 font-medium">理想買點</th>
                         <th className="py-3 pr-4 font-medium">預計股數</th>
-                        <th className="py-3 pr-4 font-medium">成交金額</th>
-                        <th className="py-3 pr-4 font-medium">日內漲跌</th>
-                        <th className="py-3 pr-4 font-medium">量能</th>
+                        <th className="py-3 pr-4 font-medium">預估成交金額</th>
+                        <th className="py-3 pr-4 font-medium">前次交易日漲跌</th>
+                        <th className="py-3 pr-4 font-medium">前次交易日成交量</th>
                         <th className="py-3 pr-4 font-medium">買賣價差</th>
                         <th className="py-3 pr-4 font-medium">操作</th>
                       </tr>
@@ -830,6 +915,10 @@ export default function ETFOrderDashboard() {
                               <Badge variant="outline" className="rounded-full">
                                 {item.category}
                               </Badge>
+                            </td>
+
+                            <td className="py-4 pr-4">
+                              {quote?.tradingDate ?? "—"}
                             </td>
 
                             <td className="py-4 pr-4 font-medium">
@@ -929,21 +1018,25 @@ export default function ETFOrderDashboard() {
 
                       <CardContent className="space-y-4">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <Metric label="現價" value={item.quote ? `$${formatNumber(item.quote.price)}` : "—"} />
+                          <Metric label="前次收盤" value={item.quote ? `$${formatNumber(item.quote.price)}` : "—"} />
                           <Metric label="理想買點" value={`$${formatNumber(item.targetBuy)}`} />
                           <Metric label="預計股數" value={String(item.shares)} />
-                          <Metric label="成交金額" value={item.amount ? `$${formatNumber(item.amount)}` : "—"} />
+                          <Metric label="預估成交金額" value={item.amount ? `$${formatNumber(item.amount)}` : "—"} />
                         </div>
 
                         <Separator />
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                           <Metric
-                            label="價格偏離"
+                            label="資料日期"
+                            value={item.quote?.tradingDate ?? "—"}
+                          />
+                          <Metric
+                            label="距離理想買點"
                             value={item.gapPct !== null ? `${formatNumber(item.gapPct)}%` : "—"}
                           />
                           <Metric
-                            label="日內漲跌"
+                            label="前次交易日漲跌"
                             value={item.quote ? `${formatNumber(item.quote.changePct)}%` : "—"}
                           />
                           <Metric label="訊號分數" value={String(item.signal.score)} />
@@ -976,7 +1069,7 @@ export default function ETFOrderDashboard() {
                 <CardContent className="space-y-5">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label>主要觀察開始時間</Label>
+                      <Label>複盤開始時間</Label>
                       <Input
                         value={settings.marketWindowStart}
                         onChange={(e) =>
@@ -986,7 +1079,7 @@ export default function ETFOrderDashboard() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>主要觀察結束時間</Label>
+                      <Label>複盤結束時間</Label>
                       <Input
                         value={settings.marketWindowEnd}
                         onChange={(e) =>
@@ -1062,10 +1155,10 @@ export default function ETFOrderDashboard() {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Bell className="h-5 w-5" />
-                    資料來源與上線說明
+                    資料來源與複盤說明
                   </CardTitle>
                   <CardDescription>
-                    這一版前端已完成主要互動，正式上線前還差最後一段報價 API。
+                    這一版已改成最新交易日複盤模式，較適合早上或中午 review。
                   </CardDescription>
                 </CardHeader>
 
@@ -1085,18 +1178,18 @@ export default function ETFOrderDashboard() {
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="font-medium text-slate-900 mb-2">正式部署時要做的事</div>
+                    <div className="font-medium text-slate-900 mb-2">目前資料模式</div>
                     <ol className="list-decimal pl-5 space-y-1">
-                      <li>申請一個美股報價 API 金鑰。</li>
-                      <li>建立 /api/quotes 伺服器端路由，避免金鑰外露。</li>
-                      <li>把這個前端部署到 Vercel 或 Render。</li>
-                      <li>之後只要打開網址，就能直接看即時判斷。</li>
+                      <li>抓取最新可得的交易日收盤資料。</li>
+                      <li>週一早上會顯示上週五資料。</li>
+                      <li>遇到休市日，會自動回推到最近一個有交易的日期。</li>
+                      <li>同一天內優先讀快取，避免浪費免費 API 額度。</li>
                     </ol>
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="font-medium text-slate-900 mb-2">建議的下一步技術方案</div>
-                    <div>Next.js + 伺服器端 quotes API + Render/Vercel。這樣最符合你現在的使用方式。</div>
+                    <div className="font-medium text-slate-900 mb-2">建議使用方式</div>
+                    <div>每天早上或中午打開一次即可，不需要熬夜盯盤，也不建議反覆連按刷新。</div>
                   </div>
                 </CardContent>
               </Card>

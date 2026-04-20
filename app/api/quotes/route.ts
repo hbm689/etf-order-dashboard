@@ -7,6 +7,8 @@ type AppQuote = {
   bid: number;
   ask: number;
   previousClose: number;
+  tradingDate: string;
+  previousTradingDate: string;
 };
 
 type DailyBar = {
@@ -39,11 +41,89 @@ type FetchFailure = {
 
 type FetchResult = FetchSuccess | FetchFailure;
 
+type MarketContext = {
+  timezone: string;
+  marketDate: string;
+  latestTradingDate: string | null;
+  previousTradingDate: string | null;
+  lastClosedStart: string | null;
+  lastClosedEnd: string | null;
+  lastClosedNote: string | null;
+};
+
 const API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
+const MARKET_TIMEZONE = "America/New_York";
 
 function toNumber(value: string | undefined, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function getDateInTimeZone(timeZone: string): string {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  return formatter.format(new Date());
+}
+
+function addDays(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function buildMarketContext(successResults: FetchSuccess[]): MarketContext {
+  const marketDate = getDateInTimeZone(MARKET_TIMEZONE);
+
+  if (successResults.length === 0) {
+    return {
+      timezone: MARKET_TIMEZONE,
+      marketDate,
+      latestTradingDate: null,
+      previousTradingDate: null,
+      lastClosedStart: null,
+      lastClosedEnd: null,
+      lastClosedNote: null,
+    };
+  }
+
+  const sorted = [...successResults].sort((a, b) =>
+    b.quote.tradingDate.localeCompare(a.quote.tradingDate),
+  );
+
+  const latestTradingDate = sorted[0].quote.tradingDate;
+  const previousTradingDate = sorted[0].quote.previousTradingDate;
+
+  const closedStart = addDays(latestTradingDate, 1);
+
+  let lastClosedStart: string | null = null;
+  let lastClosedEnd: string | null = null;
+  let lastClosedNote: string | null = null;
+
+  if (closedStart <= marketDate) {
+    lastClosedStart = closedStart;
+    lastClosedEnd = marketDate;
+
+    if (closedStart === marketDate) {
+      lastClosedNote = `${marketDate}（非交易日 / 休市）`;
+    } else {
+      lastClosedNote = `${closedStart} ~ ${marketDate}（最近非交易日 / 休市區間）`;
+    }
+  }
+
+  return {
+    timezone: MARKET_TIMEZONE,
+    marketDate,
+    latestTradingDate,
+    previousTradingDate,
+    lastClosedStart,
+    lastClosedEnd,
+    lastClosedNote,
+  };
 }
 
 async function fetchOne(symbol: string): Promise<FetchResult> {
@@ -91,8 +171,11 @@ async function fetchOne(symbol: string): Promise<FetchResult> {
     return { ok: false, symbol, reason: "No trading dates found" };
   }
 
-  const latest = series[dates[0]];
-  const prev = series[dates[1]] ?? latest;
+  const latestDate = dates[0];
+  const previousDate = dates[1] ?? dates[0];
+
+  const latest = series[latestDate];
+  const prev = series[previousDate] ?? latest;
 
   const price = toNumber(latest["4. close"], NaN);
   if (!Number.isFinite(price)) {
@@ -114,6 +197,8 @@ async function fetchOne(symbol: string): Promise<FetchResult> {
       bid: price,
       ask: price,
       previousClose,
+      tradingDate: latestDate,
+      previousTradingDate: previousDate,
     },
   };
 }
@@ -122,7 +207,7 @@ export async function GET(request: NextRequest) {
   if (!API_KEY) {
     return NextResponse.json(
       { error: "Missing ALPHA_VANTAGE_API_KEY in .env.local" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 
@@ -136,17 +221,20 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       quotes: {},
       debug: {},
+      marketContext: buildMarketContext([]),
     });
   }
 
   const result: Record<string, AppQuote> = {};
   const debug: Record<string, string> = {};
+  const successResults: FetchSuccess[] = [];
 
   for (const symbol of symbols) {
     const response = await fetchOne(symbol);
 
     if (response.ok) {
       result[symbol] = response.quote;
+      successResults.push(response);
     } else {
       debug[symbol] = response.reason;
     }
@@ -155,5 +243,6 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     quotes: result,
     debug,
+    marketContext: buildMarketContext(successResults),
   });
 }
