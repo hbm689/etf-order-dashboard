@@ -25,6 +25,20 @@ type AlphaVantageDailyResponse = {
   Information?: string;
 };
 
+type FetchSuccess = {
+  ok: true;
+  symbol: string;
+  quote: AppQuote;
+};
+
+type FetchFailure = {
+  ok: false;
+  symbol: string;
+  reason: string;
+};
+
+type FetchResult = FetchSuccess | FetchFailure;
+
 const API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
 
 function toNumber(value: string | undefined, fallback = 0): number {
@@ -32,9 +46,9 @@ function toNumber(value: string | undefined, fallback = 0): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-async function fetchOne(symbol: string) {
+async function fetchOne(symbol: string): Promise<FetchResult> {
   if (!API_KEY) {
-    return { symbol, ok: false, reason: "Missing API key" };
+    return { ok: false, symbol, reason: "Missing API key" };
   }
 
   const url =
@@ -49,32 +63,32 @@ async function fetchOne(symbol: string) {
   });
 
   if (!res.ok) {
-    return { symbol, ok: false, reason: `HTTP ${res.status}` };
+    return { ok: false, symbol, reason: `HTTP ${res.status}` };
   }
 
   const raw = (await res.json()) as AlphaVantageDailyResponse;
 
   if (raw["Error Message"]) {
-    return { symbol, ok: false, reason: raw["Error Message"] };
+    return { ok: false, symbol, reason: raw["Error Message"] };
   }
 
   if (raw.Note) {
-    return { symbol, ok: false, reason: raw.Note };
+    return { ok: false, symbol, reason: raw.Note };
   }
 
   if (raw.Information) {
-    return { symbol, ok: false, reason: raw.Information };
+    return { ok: false, symbol, reason: raw.Information };
   }
 
   if (!raw["Time Series (Daily)"]) {
-    return { symbol, ok: false, reason: "No daily time series returned" };
+    return { ok: false, symbol, reason: "No daily time series returned" };
   }
 
   const series = raw["Time Series (Daily)"];
   const dates = Object.keys(series).sort((a, b) => b.localeCompare(a));
 
   if (dates.length === 0) {
-    return { symbol, ok: false, reason: "No trading dates found" };
+    return { ok: false, symbol, reason: "No trading dates found" };
   }
 
   const latest = series[dates[0]];
@@ -82,7 +96,7 @@ async function fetchOne(symbol: string) {
 
   const price = toNumber(latest["4. close"], NaN);
   if (!Number.isFinite(price)) {
-    return { symbol, ok: false, reason: "Invalid close price" };
+    return { ok: false, symbol, reason: "Invalid close price" };
   }
 
   const previousClose = toNumber(prev["4. close"], price);
@@ -90,16 +104,18 @@ async function fetchOne(symbol: string) {
   const changePct =
     previousClose > 0 ? ((price - previousClose) / previousClose) * 100 : 0;
 
-  const quote: AppQuote = {
-    price,
-    changePct,
-    volume,
-    bid: price,
-    ask: price,
-    previousClose,
+  return {
+    ok: true,
+    symbol,
+    quote: {
+      price,
+      changePct,
+      volume,
+      bid: price,
+      ask: price,
+      previousClose,
+    },
   };
-
-  return { symbol, ok: true, quote };
 }
 
 export async function GET(request: NextRequest) {
@@ -115,6 +131,13 @@ export async function GET(request: NextRequest) {
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
+
+  if (symbols.length === 0) {
+    return NextResponse.json({
+      quotes: {},
+      debug: {},
+    });
+  }
 
   const result: Record<string, AppQuote> = {};
   const debug: Record<string, string> = {};
