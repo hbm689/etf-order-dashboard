@@ -100,6 +100,14 @@ type PersistedState = {
   settings: Settings;
 };
 
+type QuoteApiResponse =
+  | Record<string, Quote>
+  | {
+      quotes?: Record<string, Quote>;
+      debug?: Record<string, string>;
+      error?: string;
+    };
+
 const STORAGE_KEY = "etf_order_dashboard_v2";
 
 const DEFAULT_SETTINGS: Settings = {
@@ -107,7 +115,7 @@ const DEFAULT_SETTINGS: Settings = {
   marketWindowEnd: "23:00",
   defaultCurrency: "USD",
   useDemoData: false,
-  autoRefreshSeconds: 30,
+  autoRefreshSeconds: 0,
   hotMoveThresholdPct: 1.8,
   acceptableGapPct: 0.8,
   maxSpreadPct: 0.35,
@@ -357,6 +365,16 @@ function randomizeQuote(quote: Quote): Quote {
   };
 }
 
+function isWrappedQuoteResponse(
+  payload: QuoteApiResponse,
+): payload is { quotes?: Record<string, Quote>; debug?: Record<string, string>; error?: string } {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    ("quotes" in payload || "debug" in payload || "error" in payload)
+  );
+}
+
 async function fetchQuotes(
   symbols: string[],
   useDemoData: boolean,
@@ -382,7 +400,21 @@ async function fetchQuotes(
     throw new Error("報價 API 讀取失敗");
   }
 
-  return (await response.json()) as Record<string, Quote>;
+  const payload = (await response.json()) as QuoteApiResponse;
+
+  if (isWrappedQuoteResponse(payload)) {
+    if (payload.error) {
+      throw new Error(payload.error);
+    }
+
+    if (payload.debug && Object.keys(payload.debug).length > 0) {
+      console.warn("quotes debug", payload.debug);
+    }
+
+    return payload.quotes || {};
+  }
+
+  return payload as Record<string, Quote>;
 }
 
 export default function ETFOrderDashboard() {
@@ -407,7 +439,7 @@ export default function ETFOrderDashboard() {
     saveState(watchlist, settings);
   }, [watchlist, settings]);
 
-  async function refreshQuotes(): Promise<void> {
+  async function refreshQuotes(force = false): Promise<void> {
     setLoading(true);
 
     try {
@@ -415,9 +447,39 @@ export default function ETFOrderDashboard() {
         .map((item) => item.symbol.trim().toUpperCase())
         .filter(Boolean);
 
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const cacheKey = `quotes_cache_${todayKey}`;
+
+      if (!force && typeof window !== "undefined") {
+        const cached = window.localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Record<string, Quote>;
+          setQuotes(parsed);
+          setLastUpdated(new Date());
+          setLoading(false);
+          return;
+        }
+      }
+
       const data = await fetchQuotes(symbols, settings.useDemoData);
+
+      if (Object.keys(data).length === 0 && typeof window !== "undefined") {
+        const cached = window.localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsed = JSON.parse(cached) as Record<string, Quote>;
+          setQuotes(parsed);
+          setLastUpdated(new Date());
+          setLoading(false);
+          return;
+        }
+      }
+
       setQuotes(data);
       setLastUpdated(new Date());
+
+      if (typeof window !== "undefined" && Object.keys(data).length > 0) {
+        window.localStorage.setItem(cacheKey, JSON.stringify(data));
+      }
     } catch (error) {
       console.error(error);
     } finally {
@@ -463,12 +525,11 @@ export default function ETFOrderDashboard() {
     return enriched.reduce(
       (acc, item) => {
         if (item.amount) acc.totalAmount += item.amount;
-        if (item.quote) acc.totalVolume += item.quote.volume;
         if (item.signal.label === "可考慮下單") acc.ready += 1;
         if (item.signal.label === "不宜追價") acc.hot += 1;
         return acc;
       },
-      { totalAmount: 0, totalVolume: 0, ready: 0, hot: 0 },
+      { totalAmount: 0, ready: 0, hot: 0 },
     );
   }, [enriched]);
 
@@ -579,7 +640,11 @@ export default function ETFOrderDashboard() {
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <Button variant="outline" className="rounded-2xl" onClick={() => void refreshQuotes()}>
+            <Button
+              variant="outline"
+              className="rounded-2xl"
+              onClick={() => void refreshQuotes(true)}
+            >
               <RefreshCw className={`mr-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               立即刷新
             </Button>
