@@ -2,7 +2,6 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle,
   CheckCircle2,
   Clock3,
   DollarSign,
@@ -12,7 +11,6 @@ import {
   RefreshCw,
   Settings2,
   Trash2,
-  TrendingDown,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -20,10 +18,7 @@ import {
 import CandlesPanel from "@/components/candles-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -117,7 +112,7 @@ type SignalResult = {
   reason: string;
 };
 
-const STORAGE_KEY = "etf_order_dashboard_structure_v1";
+const STORAGE_KEY = "etf_order_dashboard_structure_v2";
 
 const DEFAULT_SETTINGS: Settings = {
   marketWindowStart: "22:00",
@@ -174,14 +169,6 @@ function formatCurrency(value?: number | null): string {
   })}`;
 }
 
-function formatNumber(value?: number | null, digits = 2): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return "—";
-  return value.toLocaleString(undefined, {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  });
-}
-
 function formatPercent(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "—";
   const sign = value > 0 ? "+" : "";
@@ -226,7 +213,6 @@ function atr(candles: Candle[], period: number): number | null {
   for (let i = candles.length - period; i < candles.length; i += 1) {
     const current = candles[i];
     const previous = candles[i - 1];
-
     if (!current || !previous) continue;
 
     const tr = Math.max(
@@ -255,7 +241,6 @@ function buildStructureSnapshot(
   const dLast = daily[daily.length - 1];
   const wLast = weekly[weekly.length - 1];
   const mLast = monthly[monthly.length - 1];
-
   if (!dLast || !wLast || !mLast) return null;
 
   const dMA20 = sma(daily, 20);
@@ -333,10 +318,7 @@ function buildStructureSnapshot(
     Math.abs(gapToMA20Pct) <= 3
   ) {
     pattern = "趨勢回踩";
-  } else if (
-    dailyTrend === "日線整理" &&
-    weeklyTrend === "週線整理"
-  ) {
+  } else if (dailyTrend === "日線整理" && weeklyTrend === "週線整理") {
     pattern = "區間震盪";
   } else if (
     zone === "區間下緣" &&
@@ -359,14 +341,14 @@ function buildStructureSnapshot(
         : "低";
 
   const explanation =
-    `日線目前屬於「${dailyTrend}」，週線層級為「${weeklyTrend}」，月線則偏向「${monthlyTrend}」。` +
+    `日線目前屬於「${dailyTrend}」，週線層級為「${weeklyTrend}」，月線偏向「${monthlyTrend}」。` +
     ` 目前位在近 60 日區間的「${zone}」，量能狀態屬於「${volumeProfile}」，` +
     ` 綜合起來較像「${pattern}」，風險等級為「${riskLevel}」。`;
 
   let watchText = "目前尚未形成很明確的優勢型態，建議持續觀察均線、量能與區間位置。";
 
   if (pattern === "高位整理") {
-    watchText = "重點看整理期間是否量縮、且價格仍能守住短期均線；若再帶量突破，才算新一輪轉強。";
+    watchText = "重點看整理期間是否量縮，且價格能否守住短期均線；若再帶量突破，才算新一輪轉強。";
   } else if (pattern === "趨勢回踩") {
     watchText = "這類型態通常比直接追高更健康，重點是回踩後是否守穩 20 日均線。";
   } else if (pattern === "區間震盪") {
@@ -539,7 +521,7 @@ function toneClasses(tone: SignalResult["tone"]): string {
   return "border-slate-200 bg-slate-50 text-slate-700";
 }
 
-function signalLabelClasses(tone: SignalResult["tone"]): string {
+function signalBadgeClasses(tone: SignalResult["tone"]): string {
   if (tone === "green") return "bg-emerald-100 text-emerald-700";
   if (tone === "amber") return "bg-amber-100 text-amber-700";
   if (tone === "red") return "bg-rose-100 text-rose-700";
@@ -574,7 +556,6 @@ function inReviewWindow(start: string, end: string): boolean {
 export default function Page() {
   const [watchlist, setWatchlist] = useState<WatchItem[]>(DEFAULT_WATCHLIST);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [activeTab, setActiveTab] = useState<"watch" | "signals" | "settings">("watch");
   const [activeSymbol, setActiveSymbol] = useState<string>(DEFAULT_WATCHLIST[0]?.symbol ?? "");
 
   const [quotes, setQuotes] = useState<Record<string, AppQuote>>({});
@@ -717,6 +698,9 @@ export default function Page() {
     });
   }, [watchlist, quotes, structures, settings, providers]);
 
+  const selectedEntry =
+    enrichedItems.find((entry) => entry.item.symbol === activeSymbol) ?? enrichedItems[0] ?? null;
+
   const candidateCount = enrichedItems.filter(
     (entry) => entry.signal.label === "可考慮下單",
   ).length;
@@ -794,9 +778,9 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-8 text-slate-900">
-      <div className="mx-auto max-w-7xl space-y-5">
-        <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-          <div className="max-w-3xl">
+      <div className="mx-auto max-w-[1600px] space-y-5">
+        <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+          <div className="max-w-4xl">
             <Badge variant="outline" className="rounded-full px-3 py-1 text-sm">
               美股 ETF 下單複盤站
             </Badge>
@@ -806,7 +790,7 @@ export default function Page() {
             </h1>
 
             <p className="mt-4 text-lg leading-8 text-slate-600">
-              這個版本已改以最新交易日資料為主的複盤模式。你可以在早上或中午查看上一個交易日的收盤、成交量與距離理想買點的關係，不需要熬夜盯盤。
+              這個版本已改成複盤工作台模式。左側專注看 K 線與結構，右側直接點選觀察名單，就能同步切換圖表、數值與下單訊號。
             </p>
           </div>
 
@@ -837,7 +821,7 @@ export default function Page() {
             icon={Eye}
             label="觀察標的數"
             value={`${watchlist.length} 檔`}
-            description="可自訂新增 / 編輯 / 刪除"
+            description="右側單點切換"
           />
           <InfoCard
             icon={CheckCircle2}
@@ -865,311 +849,281 @@ export default function Page() {
           />
         </div>
 
-        <CandlesPanel symbol={activeSymbol} />
+        <div className="grid gap-5 xl:grid-cols-3">
+          <div className="space-y-5 xl:col-span-2">
+            <CandlesPanel symbol={activeSymbol} />
 
-        <Card className="rounded-3xl border-slate-200 shadow-sm">
-          <CardContent className="grid gap-4 p-5 md:grid-cols-3">
-            <MiniContextCard
-              label="最新交易日（美東）"
-              value={marketContext.latestTradingDate || "—"}
-              description="目前畫面資料對應的前次交易日日期"
-            />
-            <MiniContextCard
-              label="前一交易日（美東）"
-              value={marketContext.previousTradingDate || "—"}
-              description="用來計算前次交易日漲跌幅"
-            />
-            <MiniContextCard
-              label="最近休市區間"
-              value={marketContext.lastClosedNote || "無"}
-              description="用來確認週末或休市造成的資料日期差異"
-            />
-          </CardContent>
-        </Card>
+            <Card className="rounded-3xl border-slate-200 shadow-sm">
+              <CardContent className="grid gap-4 p-5 md:grid-cols-3">
+                <MiniContextCard
+                  label="最新交易日（美東）"
+                  value={marketContext.latestTradingDate || "—"}
+                  description="目前畫面資料對應的前次交易日日期"
+                />
+                <MiniContextCard
+                  label="前一交易日（美東）"
+                  value={marketContext.previousTradingDate || "—"}
+                  description="用來計算前次交易日漲跌幅"
+                />
+                <MiniContextCard
+                  label="最近休市區間"
+                  value={marketContext.lastClosedNote || "無"}
+                  description="用來確認週末或休市造成的資料日期差異"
+                />
+              </CardContent>
+            </Card>
 
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setActiveTab("watch")}
-            className={`rounded-full border px-4 py-2 text-sm ${
-              activeTab === "watch"
-                ? "border-slate-900 bg-slate-900 text-white"
-                : "border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            觀察清單
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("signals")}
-            className={`rounded-full border px-4 py-2 text-sm ${
-              activeTab === "signals"
-                ? "border-slate-900 bg-slate-900 text-white"
-                : "border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            下單訊號
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("settings")}
-            className={`rounded-full border px-4 py-2 text-sm ${
-              activeTab === "settings"
-                ? "border-slate-900 bg-slate-900 text-white"
-                : "border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            設定
-          </button>
-        </div>
+            <Card className="rounded-3xl border-slate-200 shadow-sm">
+              <CardContent className="grid gap-4 p-5 md:grid-cols-2 xl:grid-cols-3">
+                <SettingField
+                  label="複盤時段起始"
+                  value={settings.marketWindowStart}
+                  onChange={(value) =>
+                    setSettings((current) => ({ ...current, marketWindowStart: value }))
+                  }
+                />
+                <SettingField
+                  label="複盤時段結束"
+                  value={settings.marketWindowEnd}
+                  onChange={(value) =>
+                    setSettings((current) => ({ ...current, marketWindowEnd: value }))
+                  }
+                />
+                <SettingField
+                  label="可接受偏離買點 (%)"
+                  value={String(settings.acceptableGapPct)}
+                  onChange={(value) =>
+                    setSettings((current) => ({
+                      ...current,
+                      acceptableGapPct: Number(value) || 0,
+                    }))
+                  }
+                  type="number"
+                  step="0.1"
+                />
+                <SettingField
+                  label="最大買賣價差 (%)"
+                  value={String(settings.maxSpreadPct)}
+                  onChange={(value) =>
+                    setSettings((current) => ({
+                      ...current,
+                      maxSpreadPct: Number(value) || 0,
+                    }))
+                  }
+                  type="number"
+                  step="0.1"
+                />
+                <SettingField
+                  label="偏熱漲跌門檻 (%)"
+                  value={String(settings.hotMoveThresholdPct)}
+                  onChange={(value) =>
+                    setSettings((current) => ({
+                      ...current,
+                      hotMoveThresholdPct: Number(value) || 0,
+                    }))
+                  }
+                  type="number"
+                  step="0.1"
+                />
 
-        {activeTab === "watch" ? (
-          <Card className="overflow-hidden rounded-3xl border-slate-200 shadow-sm">
-            <CardContent className="p-0">
-              <div className="border-b border-slate-200 px-5 py-5">
-                <div className="text-2xl font-bold">最新交易日觀察清單</div>
-                <div className="mt-1 text-sm text-slate-500">
-                  最後更新：{formatLastUpdated(lastUpdated)}
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
+                    <Settings2 className="h-4 w-4" />
+                    工作台說明
+                  </div>
+                  <div className="mt-2 text-sm leading-7 text-slate-600">
+                    右側點選任何一檔，左側會同步切換 K 線、技術結構與相關數值，不必再上下捲動找清單。
+                  </div>
                 </div>
-              </div>
+              </CardContent>
+            </Card>
+          </div>
 
-              <div className="overflow-x-auto">
-                <table className="min-w-[1180px] w-full text-left">
-                  <thead className="border-b border-slate-200 text-sm text-slate-500">
-                    <tr>
-                      <th className="px-5 py-4">標的</th>
-                      <th className="px-4 py-4">主題</th>
-                      <th className="px-4 py-4">來源</th>
-                      <th className="px-4 py-4">資料日期</th>
-                      <th className="px-4 py-4">前次收盤</th>
-                      <th className="px-4 py-4">理想買點</th>
-                      <th className="px-4 py-4">預計股數</th>
-                      <th className="px-4 py-4">預估成交金額</th>
-                      <th className="px-4 py-4">前次交易日漲跌</th>
-                      <th className="px-4 py-4">前次交易日成交量</th>
-                      <th className="px-4 py-4">買賣價差</th>
-                      <th className="px-5 py-4">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {enrichedItems.map((entry) => (
-                      <tr
-                        key={entry.item.symbol}
-                        className={`border-b border-slate-100 transition hover:bg-slate-50 ${
-                          activeSymbol === entry.item.symbol ? "bg-slate-50" : ""
-                        }`}
-                      >
-                        <td className="px-5 py-4">
-                          <button
-                            type="button"
-                            className="text-left"
-                            onClick={() => setActiveSymbol(entry.item.symbol)}
-                          >
-                            <div className="text-xl font-bold">{entry.item.symbol}</div>
-                            <div className="mt-1 text-lg text-slate-600">{entry.item.name}</div>
-                          </button>
-                        </td>
-                        <td className="px-4 py-4">
-                          <Badge variant="outline" className="rounded-full">
-                            {entry.item.theme || "—"}
-                          </Badge>
-                        </td>
-                        <td className="px-4 py-4">{entry.provider}</td>
-                        <td className="px-4 py-4">
-                          {entry.quote?.tradingDate || marketContext.latestTradingDate || "—"}
-                        </td>
-                        <td className="px-4 py-4">{formatCurrency(entry.quote?.previousClose)}</td>
-                        <td className="px-4 py-4">{formatCurrency(entry.item.targetBuy)}</td>
-                        <td className="px-4 py-4">{entry.item.shares}</td>
-                        <td className="px-4 py-4">{formatCurrency(entry.estimatedAmount)}</td>
-                        <td className="px-4 py-4">
-                          <span
-                            className={
-                              (entry.quote?.changePct || 0) >= 0
-                                ? "text-emerald-600"
-                                : "text-rose-600"
-                            }
-                          >
-                            {formatPercent(entry.quote?.changePct)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-4">{formatInteger(entry.quote?.volume)}</td>
-                        <td className="px-4 py-4">{formatPercent(entry.spreadPct)}</td>
-                        <td className="px-5 py-4">
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openEditDialog(entry.item)}
-                              className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-100"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteItem(entry.item.symbol)}
-                              className="rounded-full border border-slate-200 p-2 text-slate-600 hover:bg-slate-100"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {activeTab === "signals" ? (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {enrichedItems.map((entry) => (
-              <Card
-                key={entry.item.symbol}
-                className={`rounded-3xl border shadow-sm ${toneClasses(entry.signal.tone)}`}
-              >
-                <CardContent className="p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <button
-                        type="button"
-                        className="text-left"
-                        onClick={() => setActiveSymbol(entry.item.symbol)}
-                      >
-                        <div className="text-2xl font-bold">{entry.item.symbol}</div>
-                        <div className="mt-1 text-slate-600">{entry.item.name}</div>
-                      </button>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Badge variant="outline" className="rounded-full">
-                          {entry.item.theme}
-                        </Badge>
-                        {entry.structure ? (
-                          <Badge variant="outline" className="rounded-full">
-                            型態：{entry.structure.pattern}
-                          </Badge>
-                        ) : null}
-                      </div>
+          <div className="space-y-5 xl:sticky xl:top-4 self-start">
+            <Card className="rounded-3xl border-slate-200 shadow-sm">
+              <CardContent className="p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="text-sm text-slate-500">目前選中標的</div>
+                    <div className="mt-2 text-3xl font-black tracking-tight">
+                      {selectedEntry?.item.symbol || "—"}
                     </div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      {selectedEntry?.item.name || "請先新增標的"}
+                    </div>
+                  </div>
 
+                  {selectedEntry ? (
                     <span
-                      className={`rounded-full px-3 py-1 text-sm font-semibold ${signalLabelClasses(
-                        entry.signal.tone,
+                      className={`rounded-full px-3 py-1 text-sm font-semibold ${signalBadgeClasses(
+                        selectedEntry.signal.tone,
                       )}`}
                     >
-                      {entry.signal.label}
+                      {selectedEntry.signal.label}
                     </span>
-                  </div>
-
-                  <div className="mt-4 text-sm leading-7">
-                    {entry.signal.reason}
-                  </div>
-
-                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
-                    <SignalMetric
-                      label="前次收盤"
-                      value={formatCurrency(entry.quote?.previousClose)}
-                    />
-                    <SignalMetric
-                      label="理想買點"
-                      value={formatCurrency(entry.item.targetBuy)}
-                    />
-                    <SignalMetric
-                      label="前次交易日漲跌"
-                      value={formatPercent(entry.quote?.changePct)}
-                    />
-                    <SignalMetric
-                      label="區間位置"
-                      value={entry.structure?.zone || "—"}
-                    />
-                    <SignalMetric
-                      label="型態"
-                      value={entry.structure?.pattern || "—"}
-                    />
-                    <SignalMetric
-                      label="風險等級"
-                      value={entry.structure?.riskLevel || "—"}
-                    />
-                  </div>
-
-                  {entry.structure ? (
-                    <div className="mt-4 rounded-2xl bg-white/70 p-4 text-sm leading-7 text-slate-700">
-                      <div className="font-medium text-slate-900">學習解讀</div>
-                      <div className="mt-2">{entry.structure.watchText}</div>
-                    </div>
                   ) : null}
-                </CardContent>
-              </Card>
-            ))}
+                </div>
+
+                {selectedEntry ? (
+                  <>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge variant="outline" className="rounded-full">
+                        {selectedEntry.item.theme}
+                      </Badge>
+                      <Badge variant="outline" className="rounded-full">
+                        {selectedEntry.provider}
+                      </Badge>
+                      {selectedEntry.structure ? (
+                        <Badge variant="outline" className="rounded-full">
+                          {selectedEntry.structure.pattern}
+                        </Badge>
+                      ) : null}
+                    </div>
+
+                    <div className={`mt-4 rounded-2xl border p-4 text-sm leading-7 ${toneClasses(selectedEntry.signal.tone)}`}>
+                      {selectedEntry.signal.reason}
+                    </div>
+
+                    <div className="mt-4 grid grid-cols-2 gap-3">
+                      <SidebarMetric label="資料日期" value={selectedEntry.quote?.tradingDate || marketContext.latestTradingDate || "—"} />
+                      <SidebarMetric label="前次收盤" value={formatCurrency(selectedEntry.quote?.previousClose)} />
+                      <SidebarMetric label="理想買點" value={formatCurrency(selectedEntry.item.targetBuy)} />
+                      <SidebarMetric label="預估金額" value={formatCurrency(selectedEntry.estimatedAmount)} />
+                      <SidebarMetric label="前次交易日漲跌" value={formatPercent(selectedEntry.quote?.changePct)} />
+                      <SidebarMetric label="成交量" value={formatInteger(selectedEntry.quote?.volume)} />
+                      <SidebarMetric label="區間位置" value={selectedEntry.structure?.zone || "—"} />
+                      <SidebarMetric label="風險等級" value={selectedEntry.structure?.riskLevel || "—"} />
+                    </div>
+
+                    {selectedEntry.structure ? (
+                      <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                        <div className="text-sm font-medium text-slate-900">學習解讀</div>
+                        <div className="mt-2 text-sm leading-7 text-slate-600">
+                          {selectedEntry.structure.watchText}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-4 flex gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-2xl"
+                        onClick={() => openEditDialog(selectedEntry.item)}
+                      >
+                        <Pencil className="mr-2 h-4 w-4" />
+                        編輯
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="rounded-2xl"
+                        onClick={() => deleteItem(selectedEntry.item.symbol)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        刪除
+                      </Button>
+                    </div>
+                  </>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-3xl border-slate-200 shadow-sm">
+              <CardContent className="p-0">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <div className="text-xl font-bold">觀察名單</div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    最後更新：{formatLastUpdated(lastUpdated)}
+                  </div>
+                </div>
+
+                <div className="max-h-[860px] overflow-y-auto p-3">
+                  <div className="space-y-3">
+                    {enrichedItems.map((entry) => {
+                      const active = entry.item.symbol === activeSymbol;
+
+                      return (
+                        <button
+                          key={entry.item.symbol}
+                          type="button"
+                          onClick={() => setActiveSymbol(entry.item.symbol)}
+                          className={`w-full rounded-2xl border p-4 text-left transition ${
+                            active
+                              ? "border-slate-900 bg-slate-900 text-white shadow-sm"
+                              : "border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-xl font-bold">{entry.item.symbol}</div>
+                              <div className={`mt-1 text-sm ${active ? "text-slate-200" : "text-slate-500"}`}>
+                                {entry.item.name}
+                              </div>
+                            </div>
+
+                            <span
+                              className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                                active
+                                  ? "bg-white/15 text-white"
+                                  : signalBadgeClasses(entry.signal.tone)
+                              }`}
+                            >
+                              {entry.signal.label}
+                            </span>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span className={`rounded-full border px-2 py-1 text-xs ${
+                              active ? "border-white/20 text-white" : "border-slate-200 text-slate-600"
+                            }`}>
+                              {entry.item.theme}
+                            </span>
+                            <span className={`rounded-full border px-2 py-1 text-xs ${
+                              active ? "border-white/20 text-white" : "border-slate-200 text-slate-600"
+                            }`}>
+                              {entry.provider}
+                            </span>
+                            {entry.structure ? (
+                              <span className={`rounded-full border px-2 py-1 text-xs ${
+                                active ? "border-white/20 text-white" : "border-slate-200 text-slate-600"
+                              }`}>
+                                {entry.structure.pattern}
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                            <ListMetric
+                              active={active}
+                              label="前次收盤"
+                              value={formatCurrency(entry.quote?.previousClose)}
+                            />
+                            <ListMetric
+                              active={active}
+                              label="理想買點"
+                              value={formatCurrency(entry.item.targetBuy)}
+                            />
+                            <ListMetric
+                              active={active}
+                              label="漲跌"
+                              value={formatPercent(entry.quote?.changePct)}
+                            />
+                            <ListMetric
+                              active={active}
+                              label="成交量"
+                              value={formatInteger(entry.quote?.volume)}
+                            />
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-        ) : null}
-
-        {activeTab === "settings" ? (
-          <Card className="rounded-3xl border-slate-200 shadow-sm">
-            <CardContent className="grid gap-5 p-5 md:grid-cols-2 xl:grid-cols-3">
-              <SettingField
-                label="複盤時段起始"
-                value={settings.marketWindowStart}
-                onChange={(value) =>
-                  setSettings((current) => ({ ...current, marketWindowStart: value }))
-                }
-              />
-              <SettingField
-                label="複盤時段結束"
-                value={settings.marketWindowEnd}
-                onChange={(value) =>
-                  setSettings((current) => ({ ...current, marketWindowEnd: value }))
-                }
-              />
-              <SettingField
-                label="可接受偏離買點 (%)"
-                value={String(settings.acceptableGapPct)}
-                onChange={(value) =>
-                  setSettings((current) => ({
-                    ...current,
-                    acceptableGapPct: Number(value) || 0,
-                  }))
-                }
-                type="number"
-                step="0.1"
-              />
-              <SettingField
-                label="最大買賣價差 (%)"
-                value={String(settings.maxSpreadPct)}
-                onChange={(value) =>
-                  setSettings((current) => ({
-                    ...current,
-                    maxSpreadPct: Number(value) || 0,
-                  }))
-                }
-                type="number"
-                step="0.1"
-              />
-              <SettingField
-                label="偏熱漲跌門檻 (%)"
-                value={String(settings.hotMoveThresholdPct)}
-                onChange={(value) =>
-                  setSettings((current) => ({
-                    ...current,
-                    hotMoveThresholdPct: Number(value) || 0,
-                  }))
-                }
-                type="number"
-                step="0.1"
-              />
-
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
-                  <Settings2 className="h-4 w-4" />
-                  設定說明
-                </div>
-                <div className="mt-2 text-sm leading-7 text-slate-600">
-                  這一版的下單訊號不再只看前一日，而是綜合結構、位置、量能與買點距離判斷。
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
+        </div>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="sm:max-w-xl">
@@ -1278,7 +1232,7 @@ function MiniContextCard({
   );
 }
 
-function SignalMetric({
+function SidebarMetric({
   label,
   value,
 }: {
@@ -1286,9 +1240,30 @@ function SignalMetric({
   value: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white/70 p-3">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
       <div className="text-xs text-slate-500">{label}</div>
       <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
+function ListMetric({
+  active,
+  label,
+  value,
+}: {
+  active: boolean;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className={`rounded-2xl border p-3 ${
+      active ? "border-white/15 bg-white/5" : "border-slate-200 bg-slate-50"
+    }`}>
+      <div className={`text-xs ${active ? "text-slate-200" : "text-slate-500"}`}>
+        {label}
+      </div>
+      <div className="mt-1 text-base font-semibold">{value}</div>
     </div>
   );
 }

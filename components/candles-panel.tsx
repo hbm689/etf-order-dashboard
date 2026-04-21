@@ -542,7 +542,7 @@ export default function CandlesPanel({ symbol }: Props) {
 
     const chart = createChart(chartRef.current, {
       width: chartRef.current.clientWidth,
-      height: 420,
+      height: 380,
       layout: {
         background: { type: ColorType.Solid, color: "#ffffff" },
         textColor: "#475569",
@@ -624,18 +624,18 @@ export default function CandlesPanel({ symbol }: Props) {
   const isLoading =
     seriesData.D.loading || seriesData.W.loading || seriesData.M.loading;
 
-  const mergedInfo = [seriesData.D.info, seriesData.W.info, seriesData.M.info]
-    .filter(Boolean)
-    .join(" / ");
+  const mergedInfo = Array.from(
+    new Set([seriesData.D.info, seriesData.W.info, seriesData.M.info].filter(Boolean)),
+  ).join(" / ");
 
-  const mergedError = [seriesData.D.error, seriesData.W.error, seriesData.M.error]
-    .filter(Boolean)
-    .join(" / ");
+  const mergedError = Array.from(
+    new Set([seriesData.D.error, seriesData.W.error, seriesData.M.error].filter(Boolean)),
+  ).join(" / ");
 
   return (
     <div className="space-y-5">
       <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div>
             <div className="text-sm text-slate-500">K 線複盤</div>
             <div className="mt-1 flex items-center gap-2">
