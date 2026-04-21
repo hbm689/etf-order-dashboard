@@ -120,11 +120,13 @@ type QuoteApiResponse =
       debug?: Record<string, string>;
       error?: string;
       marketContext?: MarketContext;
+      providers?: Record<string, string>;
     };
 
 type QuoteCachePayload = {
   quotes: Record<string, Quote>;
   marketContext: MarketContext | null;
+  providers: Record<string, string>;
   cachedAt: string;
 };
 
@@ -181,8 +183,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     price: 229.03,
     changePct: -0.84,
     volume: 181240,
-    bid: 228.95,
-    ask: 229.18,
+    bid: 229.03,
+    ask: 229.03,
     previousClose: 230.97,
     tradingDate: "2026-04-17",
     previousTradingDate: "2026-04-16",
@@ -191,8 +193,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     price: 54.7,
     changePct: 2.4,
     volume: 96430,
-    bid: 54.61,
-    ask: 54.82,
+    bid: 54.7,
+    ask: 54.7,
     previousClose: 53.42,
     tradingDate: "2026-04-17",
     previousTradingDate: "2026-04-16",
@@ -201,8 +203,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     price: 30.81,
     changePct: 0.22,
     volume: 2411080,
-    bid: 30.8,
-    ask: 30.82,
+    bid: 30.81,
+    ask: 30.81,
     previousClose: 30.74,
     tradingDate: "2026-04-17",
     previousTradingDate: "2026-04-16",
@@ -211,8 +213,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     price: 27.5,
     changePct: 1.1,
     volume: 129500,
-    bid: 27.45,
-    ask: 27.53,
+    bid: 27.5,
+    ask: 27.5,
     previousClose: 27.2,
     tradingDate: "2026-04-17",
     previousTradingDate: "2026-04-16",
@@ -221,8 +223,8 @@ const DEMO_QUOTES: Record<string, Quote> = {
     price: 241.6,
     changePct: 1.9,
     volume: 512300,
-    bid: 241.42,
-    ask: 241.75,
+    bid: 241.6,
+    ask: 241.6,
     previousClose: 237.1,
     tradingDate: "2026-04-17",
     previousTradingDate: "2026-04-16",
@@ -364,8 +366,6 @@ function isInsideWindow(now: Date, start: string, end: string): boolean {
 function randomizeQuote(quote: Quote): Quote {
   const drift = (Math.random() - 0.5) * 0.6;
   const nextPrice = Math.max(1, quote.price * (1 + drift / 100));
-  const nextBid = nextPrice * 0.9988;
-  const nextAsk = nextPrice * 1.0012;
 
   return {
     ...quote,
@@ -374,8 +374,8 @@ function randomizeQuote(quote: Quote): Quote {
       (quote.changePct + (Math.random() - 0.5) * 0.5).toFixed(2),
     ),
     volume: Math.max(1000, Math.round(quote.volume * (1 + Math.random() * 0.08))),
-    bid: Number(nextBid.toFixed(2)),
-    ask: Number(nextAsk.toFixed(2)),
+    bid: Number(nextPrice.toFixed(2)),
+    ask: Number(nextPrice.toFixed(2)),
   };
 }
 
@@ -386,6 +386,7 @@ function isWrappedQuoteResponse(
   debug?: Record<string, string>;
   error?: string;
   marketContext?: MarketContext;
+  providers?: Record<string, string>;
 } {
   return (
     typeof payload === "object" &&
@@ -393,7 +394,8 @@ function isWrappedQuoteResponse(
     ("quotes" in payload ||
       "debug" in payload ||
       "error" in payload ||
-      "marketContext" in payload)
+      "marketContext" in payload ||
+      "providers" in payload)
   );
 }
 
@@ -412,7 +414,11 @@ function getDemoMarketContext(): MarketContext {
 async function fetchQuotes(
   symbols: string[],
   useDemoData: boolean,
-): Promise<{ quotes: Record<string, Quote>; marketContext: MarketContext | null }> {
+): Promise<{
+  quotes: Record<string, Quote>;
+  marketContext: MarketContext | null;
+  providers: Record<string, string>;
+}> {
   if (useDemoData) {
     const result: Record<string, Quote> = {};
 
@@ -425,6 +431,7 @@ async function fetchQuotes(
     return {
       quotes: result,
       marketContext: getDemoMarketContext(),
+      providers: Object.fromEntries(symbols.map((symbol) => [symbol, "Demo"])),
     };
   }
 
@@ -444,19 +451,17 @@ async function fetchQuotes(
       throw new Error(payload.error);
     }
 
-    if (payload.debug && Object.keys(payload.debug).length > 0) {
-      console.warn("quotes debug", payload.debug);
-    }
-
     return {
       quotes: payload.quotes || {},
       marketContext: payload.marketContext || null,
+      providers: payload.providers || {},
     };
   }
 
   return {
     quotes: payload as Record<string, Quote>,
     marketContext: null,
+    providers: {},
   };
 }
 
@@ -465,6 +470,7 @@ export default function ETFOrderDashboard() {
   const [watchlist, setWatchlist] = useState<WatchItem[]>(initial.watchlist);
   const [settings, setSettings] = useState<Settings>(initial.settings);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
+  const [providers, setProviders] = useState<Record<string, string>>({});
   const [marketContext, setMarketContext] = useState<MarketContext | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -509,6 +515,7 @@ export default function ETFOrderDashboard() {
           const parsed = JSON.parse(cached) as QuoteCachePayload;
           setQuotes(parsed.quotes || {});
           setMarketContext(parsed.marketContext || null);
+          setProviders(parsed.providers || {});
           setLastUpdated(parsed.cachedAt ? new Date(parsed.cachedAt) : new Date());
           setLoading(false);
           return;
@@ -523,6 +530,7 @@ export default function ETFOrderDashboard() {
           const parsed = JSON.parse(cached) as QuoteCachePayload;
           setQuotes(parsed.quotes || {});
           setMarketContext(parsed.marketContext || null);
+          setProviders(parsed.providers || {});
           setLastUpdated(parsed.cachedAt ? new Date(parsed.cachedAt) : new Date());
           setLoading(false);
           return;
@@ -532,12 +540,14 @@ export default function ETFOrderDashboard() {
       const now = new Date();
       setQuotes(data.quotes);
       setMarketContext(data.marketContext);
+      setProviders(data.providers || {});
       setLastUpdated(now);
 
       if (typeof window !== "undefined" && Object.keys(data.quotes).length > 0) {
         const cachePayload: QuoteCachePayload = {
           quotes: data.quotes,
           marketContext: data.marketContext,
+          providers: data.providers || {},
           cachedAt: now.toISOString(),
         };
         window.localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
@@ -900,11 +910,12 @@ export default function ETFOrderDashboard() {
 
               <CardContent>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left min-w-[1100px]">
+                  <table className="w-full text-left min-w-[1200px]">
                     <thead className="text-sm text-slate-500 border-b border-slate-200">
                       <tr>
                         <th className="py-3 pr-4 font-medium">標的</th>
                         <th className="py-3 pr-4 font-medium">主題</th>
+                        <th className="py-3 pr-4 font-medium">來源</th>
                         <th className="py-3 pr-4 font-medium">資料日期</th>
                         <th className="py-3 pr-4 font-medium">前次收盤</th>
                         <th className="py-3 pr-4 font-medium">理想買點</th>
@@ -945,6 +956,12 @@ export default function ETFOrderDashboard() {
                             <td className="py-4 pr-4">
                               <Badge variant="outline" className="rounded-full">
                                 {item.category}
+                              </Badge>
+                            </td>
+
+                            <td className="py-4 pr-4">
+                              <Badge variant="outline" className="rounded-full">
+                                {providers[item.symbol] ?? "—"}
                               </Badge>
                             </td>
 
@@ -1041,6 +1058,9 @@ export default function ETFOrderDashboard() {
                               {item.symbol}
                               <Badge variant="outline" className="rounded-full">
                                 {item.category}
+                              </Badge>
+                              <Badge variant="outline" className="rounded-full">
+                                {providers[item.symbol] ?? "—"}
                               </Badge>
                             </CardTitle>
                             <CardDescription className="mt-1">
@@ -1236,7 +1256,7 @@ export default function ETFOrderDashboard() {
                     資料來源與複盤說明
                   </CardTitle>
                   <CardDescription>
-                    這一版已改成最新交易日複盤模式，較適合早上或中午 review。
+                    現在已改成 EODHD 主源、Alpha Vantage 備援。
                   </CardDescription>
                 </CardHeader>
 
@@ -1244,7 +1264,7 @@ export default function ETFOrderDashboard() {
                   <div className="flex items-center justify-between rounded-2xl border border-slate-200 p-4">
                     <div>
                       <div className="font-medium text-slate-900">使用示意資料</div>
-                      <div>關閉後，前端會改讀你自己的 /api/quotes。</div>
+                      <div>關閉後，前端會改讀你自己的真實 `/api/quotes`。</div>
                     </div>
 
                     <Switch
@@ -1260,10 +1280,10 @@ export default function ETFOrderDashboard() {
                       目前資料模式
                     </div>
                     <ol className="list-decimal pl-5 space-y-1">
-                      <li>抓取最新可得的交易日收盤資料。</li>
-                      <li>週一早上會顯示上週五資料。</li>
-                      <li>遇到休市日，會自動回推到最近一個有交易的日期。</li>
-                      <li>同一天內優先讀快取，避免浪費免費 API 額度。</li>
+                      <li>報價優先讀 EODHD。</li>
+                      <li>EODHD 失敗時，自動改打 Alpha Vantage。</li>
+                      <li>同一天內優先讀快取，避免浪費 API 額度。</li>
+                      <li>K 線與報價會分別顯示資料來源。</li>
                     </ol>
                   </div>
 

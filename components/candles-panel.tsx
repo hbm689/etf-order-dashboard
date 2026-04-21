@@ -6,7 +6,9 @@ import {
   ColorType,
   createChart,
   HistogramSeries,
+  type Time,
 } from "lightweight-charts";
+import { Badge } from "@/components/ui/badge";
 
 type Candle = {
   time: string;
@@ -20,9 +22,21 @@ type Candle = {
 type CandleApiResponse = {
   symbol?: string;
   interval?: string;
+  provider?: string;
+  providerLabel?: string;
   latestTradingDate?: string | null;
   candles?: Candle[];
+  debug?: string[];
   error?: string;
+};
+
+type CandleCachePayload = {
+  symbol: string;
+  interval: string;
+  providerLabel: string | null;
+  latestTradingDate: string | null;
+  candles: Candle[];
+  cachedAt: string;
 };
 
 type Props = {
@@ -35,18 +49,54 @@ const INTERVALS = [
   { key: "M", label: "月線" },
 ] as const;
 
+function getLocalDateKey(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function translateApiError(message: string): string {
+  const text = message.toLowerCase();
+
+  if (
+    text.includes("free api requests") ||
+    text.includes("standard api rate limit") ||
+    text.includes("25 requests per day") ||
+    text.includes("please consider spreading out your free api requests")
+  ) {
+    return "今日 Alpha Vantage 免費額度已用完，系統會優先改用 EODHD；若兩邊都失敗，請明天再試。";
+  }
+
+  if (text.includes("missing eodhd_api_key")) {
+    return "尚未設定 EODHD API 金鑰。";
+  }
+
+  if (text.includes("missing alpha_vantage_api_key")) {
+    return "尚未設定 Alpha Vantage API 金鑰。";
+  }
+
+  if (text.includes("all providers failed")) {
+    return "目前 EODHD 與 Alpha Vantage 都沒有成功回傳 K 線資料。";
+  }
+
+  return `K 線資料讀取失敗：${message}`;
+}
+
 export default function CandlesPanel({ symbol }: Props) {
   const [interval, setInterval] = useState<"D" | "W" | "M">("D");
   const [candles, setCandles] = useState<Candle[]>([]);
   const [latestTradingDate, setLatestTradingDate] = useState<string | null>(null);
+  const [providerLabel, setProviderLabel] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>("");
+  const [info, setInfo] = useState<string>("");
 
   const chartRef = useRef<HTMLDivElement | null>(null);
 
   const cacheKey = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
-    return `candles_${today}_${symbol}_${interval}`;
+    return `candles_${getLocalDateKey()}_${symbol}_${interval}`;
   }, [symbol, interval]);
 
   useEffect(() => {
@@ -57,14 +107,22 @@ export default function CandlesPanel({ symbol }: Props) {
 
       setLoading(true);
       setError("");
+      setInfo("");
 
       try {
-        const cached = window.localStorage.getItem(cacheKey);
-        if (cached) {
-          const parsed = JSON.parse(cached) as CandleApiResponse;
+        const cachedRaw =
+          typeof window !== "undefined"
+            ? window.localStorage.getItem(cacheKey)
+            : null;
+
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw) as CandleCachePayload;
+
           if (!cancelled) {
-            setCandles(parsed.candles || []);
-            setLatestTradingDate(parsed.latestTradingDate || null);
+            setCandles(cached.candles || []);
+            setLatestTradingDate(cached.latestTradingDate || null);
+            setProviderLabel(cached.providerLabel || null);
+            setInfo("已載入今日快取 K 線資料，今天不再重複消耗 API 額度。");
             setLoading(false);
             return;
           }
@@ -81,16 +139,65 @@ export default function CandlesPanel({ symbol }: Props) {
           throw new Error(payload.error || "K 線資料讀取失敗");
         }
 
+        const nextCandles = payload.candles || [];
+        const nextLatestTradingDate = payload.latestTradingDate || null;
+        const nextProviderLabel = payload.providerLabel || null;
+
         if (!cancelled) {
-          setCandles(payload.candles || []);
-          setLatestTradingDate(payload.latestTradingDate || null);
-          window.localStorage.setItem(cacheKey, JSON.stringify(payload));
+          setCandles(nextCandles);
+          setLatestTradingDate(nextLatestTradingDate);
+          setProviderLabel(nextProviderLabel);
+          setError("");
+          setInfo("");
+
+          if (typeof window !== "undefined" && nextCandles.length > 0) {
+            const cachePayload: CandleCachePayload = {
+              symbol,
+              interval,
+              providerLabel: nextProviderLabel,
+              latestTradingDate: nextLatestTradingDate,
+              candles: nextCandles,
+              cachedAt: new Date().toISOString(),
+            };
+
+            window.localStorage.setItem(cacheKey, JSON.stringify(cachePayload));
+          }
         }
       } catch (err) {
+        const rawMessage =
+          err instanceof Error ? err.message : "K 線資料讀取失敗";
+
+        const cachedRaw =
+          typeof window !== "undefined"
+            ? window.localStorage.getItem(cacheKey)
+            : null;
+
+        if (cachedRaw) {
+          try {
+            const cached = JSON.parse(cachedRaw) as CandleCachePayload;
+
+            if (!cancelled) {
+              setCandles(cached.candles || []);
+              setLatestTradingDate(cached.latestTradingDate || null);
+              setProviderLabel(cached.providerLabel || null);
+              setError("");
+              setInfo(
+                "今天的即時請求已受限，已自動改用今日稍早成功抓到的 K 線快取資料。",
+              );
+              setLoading(false);
+              return;
+            }
+          } catch {
+            // ignore cache parse error
+          }
+        }
+
         if (!cancelled) {
           setCandles([]);
           setLatestTradingDate(null);
-          setError(err instanceof Error ? err.message : "K 線資料讀取失敗");
+          setProviderLabel(null);
+          setInfo("");
+          setError(translateApiError(rawMessage));
         }
       } finally {
         if (!cancelled) {
@@ -141,7 +248,7 @@ export default function CandlesPanel({ symbol }: Props) {
 
     candleSeries.setData(
       candles.map((c) => ({
-        time: c.time,
+        time: c.time as Time,
         open: c.open,
         high: c.high,
         low: c.low,
@@ -165,9 +272,12 @@ export default function CandlesPanel({ symbol }: Props) {
 
     volumeSeries.setData(
       candles.map((c) => ({
-        time: c.time,
+        time: c.time as Time,
         value: c.volume,
-        color: c.close >= c.open ? "rgba(22, 163, 74, 0.45)" : "rgba(220, 38, 38, 0.45)",
+        color:
+          c.close >= c.open
+            ? "rgba(22, 163, 74, 0.45)"
+            : "rgba(220, 38, 38, 0.45)",
       })),
     );
 
@@ -192,7 +302,16 @@ export default function CandlesPanel({ symbol }: Props) {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="text-sm text-slate-500">K 線複盤</div>
-          <div className="mt-1 text-2xl font-semibold tracking-tight">{symbol || "—"}</div>
+          <div className="mt-1 flex items-center gap-2">
+            <div className="text-2xl font-semibold tracking-tight">
+              {symbol || "—"}
+            </div>
+            {providerLabel ? (
+              <Badge variant="outline" className="rounded-full">
+                {providerLabel}
+              </Badge>
+            ) : null}
+          </div>
           <div className="mt-1 text-sm text-slate-500">
             最新資料日期：{latestTradingDate || "—"}
           </div>
@@ -216,22 +335,34 @@ export default function CandlesPanel({ symbol }: Props) {
         </div>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-4 space-y-3">
         {loading ? (
           <div className="rounded-2xl bg-slate-50 p-8 text-sm text-slate-500">
             讀取 K 線資料中…
           </div>
-        ) : error ? (
+        ) : null}
+
+        {!loading && info ? (
+          <div className="rounded-2xl bg-amber-50 p-4 text-sm text-amber-800">
+            {info}
+          </div>
+        ) : null}
+
+        {!loading && error ? (
           <div className="rounded-2xl bg-rose-50 p-4 text-sm text-rose-700">
             {error}
           </div>
-        ) : candles.length === 0 ? (
+        ) : null}
+
+        {!loading && !error && candles.length === 0 ? (
           <div className="rounded-2xl bg-slate-50 p-8 text-sm text-slate-500">
             目前沒有可顯示的 K 線資料
           </div>
-        ) : (
+        ) : null}
+
+        {candles.length > 0 ? (
           <div ref={chartRef} className="w-full overflow-hidden rounded-2xl" />
-        )}
+        ) : null}
       </div>
     </div>
   );
