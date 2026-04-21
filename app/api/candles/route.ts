@@ -1,45 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
-type AppQuote = {
-  price: number;
-  changePct: number;
+type Candle = {
+  time: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
   volume: number;
-  bid: number;
-  ask: number;
-  previousClose: number;
-  tradingDate: string;
-  previousTradingDate: string;
 };
 
 type ProviderCode = "eodhd" | "alphavantage";
-
-type FetchSuccess = {
-  ok: true;
-  symbol: string;
-  quote: AppQuote;
-  provider: ProviderCode;
-  providerLabel: string;
-  attempted: string[];
-};
-
-type FetchFailure = {
-  ok: false;
-  symbol: string;
-  reason: string;
-  attempted: string[];
-};
-
-type FetchResult = FetchSuccess | FetchFailure;
-
-type MarketContext = {
-  timezone: string;
-  marketDate: string;
-  latestTradingDate: string | null;
-  previousTradingDate: string | null;
-  lastClosedStart: string | null;
-  lastClosedEnd: string | null;
-  lastClosedNote: string | null;
-};
 
 type EodhdBar = {
   date?: string;
@@ -51,40 +21,46 @@ type EodhdBar = {
   volume?: string | number;
 };
 
-type AlphaVantageDailyBar = {
+type AlphaVantageBar = {
   "1. open": string;
   "2. high": string;
   "3. low": string;
   "4. close": string;
-  "5. volume": string;
+  "5. volume"?: string;
 };
 
-type AlphaVantageDailyResponse = {
-  "Meta Data"?: Record<string, string>;
-  "Time Series (Daily)"?: Record<string, AlphaVantageDailyBar>;
+type AlphaResponse = {
+  "Time Series (Daily)"?: Record<string, AlphaVantageBar>;
+  "Weekly Time Series"?: Record<string, AlphaVantageBar>;
+  "Monthly Time Series"?: Record<string, AlphaVantageBar>;
   "Error Message"?: string;
   Note?: string;
   Information?: string;
 };
 
+type CandleSuccess = {
+  ok: true;
+  provider: ProviderCode;
+  providerLabel: string;
+  candles: Candle[];
+  latestTradingDate: string | null;
+  attempted: string[];
+};
+
+type CandleFailure = {
+  ok: false;
+  reason: string;
+  attempted: string[];
+};
+
+type CandleResult = CandleSuccess | CandleFailure;
+
 const EODHD_API_KEY = process.env.EODHD_API_KEY;
 const ALPHA_VANTAGE_API_KEY = process.env.ALPHA_VANTAGE_API_KEY;
-const MARKET_TIMEZONE = "America/New_York";
 
 function toNumber(value: string | number | undefined, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
-}
-
-function getDateInTimeZone(timeZone: string): string {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  });
-
-  return formatter.format(new Date());
 }
 
 function addDays(dateStr: string, days: number): string {
@@ -93,77 +69,49 @@ function addDays(dateStr: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function buildMarketContext(successResults: FetchSuccess[]): MarketContext {
-  const marketDate = getDateInTimeZone(MARKET_TIMEZONE);
+function getFromDateByInterval(interval: "D" | "W" | "M"): string {
+  const today = new Date().toISOString().slice(0, 10);
 
-  if (successResults.length === 0) {
-    return {
-      timezone: MARKET_TIMEZONE,
-      marketDate,
-      latestTradingDate: null,
-      previousTradingDate: null,
-      lastClosedStart: null,
-      lastClosedEnd: null,
-      lastClosedNote: null,
-    };
-  }
-
-  const sorted = [...successResults].sort((a, b) =>
-    b.quote.tradingDate.localeCompare(a.quote.tradingDate),
-  );
-
-  const latestTradingDate = sorted[0].quote.tradingDate;
-  const previousTradingDate = sorted[0].quote.previousTradingDate;
-  const closedStart = addDays(latestTradingDate, 1);
-
-  let lastClosedStart: string | null = null;
-  let lastClosedEnd: string | null = null;
-  let lastClosedNote: string | null = null;
-
-  if (closedStart <= marketDate) {
-    lastClosedStart = closedStart;
-    lastClosedEnd = marketDate;
-
-    if (closedStart === marketDate) {
-      lastClosedNote = `${marketDate}（非交易日 / 休市）`;
-    } else {
-      lastClosedNote = `${closedStart} ~ ${marketDate}（最近非交易日 / 休市區間）`;
-    }
-  }
-
-  return {
-    timezone: MARKET_TIMEZONE,
-    marketDate,
-    latestTradingDate,
-    previousTradingDate,
-    lastClosedStart,
-    lastClosedEnd,
-    lastClosedNote,
-  };
+  if (interval === "D") return addDays(today, -420);
+  if (interval === "W") return addDays(today, -3650);
+  return addDays(today, -7300);
 }
 
-function getRecentFromDate(daysBack: number): string {
-  return addDays(new Date().toISOString().slice(0, 10), -daysBack);
+function normalizeCandles(raw: Candle[]): Candle[] {
+  return raw
+    .filter(
+      (item) =>
+        !!item.time &&
+        Number.isFinite(item.open) &&
+        Number.isFinite(item.high) &&
+        Number.isFinite(item.low) &&
+        Number.isFinite(item.close),
+    )
+    .sort((a, b) => a.time.localeCompare(b.time))
+    .slice(-180);
 }
 
-async function fetchFromEodhd(symbol: string): Promise<FetchResult> {
+async function fetchFromEodhd(
+  symbol: string,
+  interval: "D" | "W" | "M",
+): Promise<CandleResult> {
   if (!EODHD_API_KEY) {
     return {
       ok: false,
-      symbol,
       reason: "Missing EODHD_API_KEY",
       attempted: [],
     };
   }
 
   const eodhdSymbol = `${symbol}.US`;
-  const from = getRecentFromDate(14);
+  const period = interval === "D" ? "d" : interval === "W" ? "w" : "m";
+  const from = getFromDateByInterval(interval);
 
   const url =
     `https://eodhd.com/api/eod/${encodeURIComponent(eodhdSymbol)}` +
     `?api_token=${encodeURIComponent(EODHD_API_KEY)}` +
     `&fmt=json` +
-    `&period=d` +
+    `&period=${period}` +
     `&from=${encodeURIComponent(from)}`;
 
   const res = await fetch(url, {
@@ -174,90 +122,74 @@ async function fetchFromEodhd(symbol: string): Promise<FetchResult> {
   if (!res.ok) {
     return {
       ok: false,
-      symbol,
       reason: `EODHD HTTP ${res.status}`,
       attempted: [],
     };
   }
 
-  const raw = (await res.json()) as EodhdBar[] | { error?: string; message?: string };
+  const raw = (await res.json()) as
+    | EodhdBar[]
+    | { error?: string; message?: string };
 
   if (!Array.isArray(raw)) {
     return {
       ok: false,
-      symbol,
       reason: raw.error || raw.message || "EODHD invalid response",
       attempted: [],
     };
   }
 
-  if (raw.length === 0) {
-    return {
-      ok: false,
-      symbol,
-      reason: "EODHD returned no bars",
-      attempted: [],
-    };
-  }
-
-  const sorted = [...raw].sort((a, b) =>
-    String(b.date ?? "").localeCompare(String(a.date ?? "")),
+  const candles = normalizeCandles(
+    raw.map((bar) => ({
+      time: String(bar.date ?? ""),
+      open: toNumber(bar.open, NaN),
+      high: toNumber(bar.high, NaN),
+      low: toNumber(bar.low, NaN),
+      close: toNumber(bar.close, NaN),
+      volume: toNumber(bar.volume, 0),
+    })),
   );
 
-  const latest = sorted[0];
-  const prev = sorted[1] ?? sorted[0];
-
-  const tradingDate = latest.date ?? "";
-  const previousTradingDate = prev.date ?? tradingDate;
-  const price = toNumber(latest.close, NaN);
-
-  if (!tradingDate || !Number.isFinite(price)) {
+  if (candles.length === 0) {
     return {
       ok: false,
-      symbol,
-      reason: "EODHD returned incomplete price data",
+      reason: "EODHD returned no candle data",
       attempted: [],
     };
   }
-
-  const previousClose = toNumber(prev.close, price);
-  const volume = toNumber(latest.volume, 0);
-  const changePct =
-    previousClose > 0 ? ((price - previousClose) / previousClose) * 100 : 0;
 
   return {
     ok: true,
-    symbol,
     provider: "eodhd",
     providerLabel: "EODHD",
+    candles,
+    latestTradingDate: candles[candles.length - 1]?.time ?? null,
     attempted: [],
-    quote: {
-      price,
-      changePct,
-      volume,
-      bid: price,
-      ask: price,
-      previousClose,
-      tradingDate,
-      previousTradingDate,
-    },
   };
 }
 
-async function fetchFromAlphaVantage(symbol: string): Promise<FetchResult> {
+async function fetchFromAlphaVantage(
+  symbol: string,
+  interval: "D" | "W" | "M",
+): Promise<CandleResult> {
   if (!ALPHA_VANTAGE_API_KEY) {
     return {
       ok: false,
-      symbol,
       reason: "Missing ALPHA_VANTAGE_API_KEY",
       attempted: [],
     };
   }
 
+  const fn =
+    interval === "D"
+      ? "TIME_SERIES_DAILY"
+      : interval === "W"
+        ? "TIME_SERIES_WEEKLY"
+        : "TIME_SERIES_MONTHLY";
+
   const url =
-    `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY` +
+    `https://www.alphavantage.co/query?function=${fn}` +
     `&symbol=${encodeURIComponent(symbol)}` +
-    `&outputsize=compact` +
     `&apikey=${encodeURIComponent(ALPHA_VANTAGE_API_KEY)}`;
 
   const res = await fetch(url, {
@@ -268,18 +200,16 @@ async function fetchFromAlphaVantage(symbol: string): Promise<FetchResult> {
   if (!res.ok) {
     return {
       ok: false,
-      symbol,
       reason: `Alpha Vantage HTTP ${res.status}`,
       attempted: [],
     };
   }
 
-  const raw = (await res.json()) as AlphaVantageDailyResponse;
+  const raw = (await res.json()) as AlphaResponse;
 
   if (raw["Error Message"]) {
     return {
       ok: false,
-      symbol,
       reason: raw["Error Message"],
       attempted: [],
     };
@@ -288,7 +218,6 @@ async function fetchFromAlphaVantage(symbol: string): Promise<FetchResult> {
   if (raw.Note) {
     return {
       ok: false,
-      symbol,
       reason: raw.Note,
       attempted: [],
     };
@@ -297,78 +226,62 @@ async function fetchFromAlphaVantage(symbol: string): Promise<FetchResult> {
   if (raw.Information) {
     return {
       ok: false,
-      symbol,
       reason: raw.Information,
       attempted: [],
     };
   }
 
-  const series = raw["Time Series (Daily)"];
+  const series =
+    interval === "D"
+      ? raw["Time Series (Daily)"]
+      : interval === "W"
+        ? raw["Weekly Time Series"]
+        : raw["Monthly Time Series"];
 
   if (!series) {
     return {
       ok: false,
-      symbol,
-      reason: "Alpha Vantage returned no daily series",
+      reason: "Alpha Vantage returned no candle series",
       attempted: [],
     };
   }
 
-  const dates = Object.keys(series).sort((a, b) => b.localeCompare(a));
+  const candles = normalizeCandles(
+    Object.entries(series).map(([time, bar]) => ({
+      time,
+      open: toNumber(bar["1. open"], NaN),
+      high: toNumber(bar["2. high"], NaN),
+      low: toNumber(bar["3. low"], NaN),
+      close: toNumber(bar["4. close"], NaN),
+      volume: toNumber(bar["5. volume"], 0),
+    })),
+  );
 
-  if (dates.length === 0) {
+  if (candles.length === 0) {
     return {
       ok: false,
-      symbol,
-      reason: "Alpha Vantage returned no trading dates",
+      reason: "Alpha Vantage returned empty candle data",
       attempted: [],
     };
   }
-
-  const latestDate = dates[0];
-  const previousDate = dates[1] ?? dates[0];
-  const latest = series[latestDate];
-  const prev = series[previousDate] ?? latest;
-
-  const price = toNumber(latest["4. close"], NaN);
-
-  if (!Number.isFinite(price)) {
-    return {
-      ok: false,
-      symbol,
-      reason: "Alpha Vantage returned invalid close price",
-      attempted: [],
-    };
-  }
-
-  const previousClose = toNumber(prev["4. close"], price);
-  const volume = toNumber(latest["5. volume"], 0);
-  const changePct =
-    previousClose > 0 ? ((price - previousClose) / previousClose) * 100 : 0;
 
   return {
     ok: true,
-    symbol,
     provider: "alphavantage",
     providerLabel: "Alpha Vantage",
+    candles,
+    latestTradingDate: candles[candles.length - 1]?.time ?? null,
     attempted: [],
-    quote: {
-      price,
-      changePct,
-      volume,
-      bid: price,
-      ask: price,
-      previousClose,
-      tradingDate: latestDate,
-      previousTradingDate: previousDate,
-    },
   };
 }
 
-async function fetchOne(symbol: string): Promise<FetchResult> {
+async function fetchOne(
+  symbol: string,
+  interval: "D" | "W" | "M",
+): Promise<CandleResult> {
   const attempted: string[] = [];
 
-  const eodhd = await fetchFromEodhd(symbol);
+  const eodhd = await fetchFromEodhd(symbol, interval);
   attempted.push(`EODHD: ${eodhd.ok ? "ok" : eodhd.reason}`);
 
   if (eodhd.ok) {
@@ -378,7 +291,7 @@ async function fetchOne(symbol: string): Promise<FetchResult> {
     };
   }
 
-  const av = await fetchFromAlphaVantage(symbol);
+  const av = await fetchFromAlphaVantage(symbol, interval);
   attempted.push(`Alpha Vantage: ${av.ok ? "ok" : av.reason}`);
 
   if (av.ok) {
@@ -390,7 +303,6 @@ async function fetchOne(symbol: string): Promise<FetchResult> {
 
   return {
     ok: false,
-    symbol,
     reason: "All providers failed",
     attempted,
   };
@@ -398,46 +310,44 @@ async function fetchOne(symbol: string): Promise<FetchResult> {
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const symbols = (searchParams.get("symbols") || "")
-    .split(",")
-    .map((s) => s.trim().toUpperCase())
-    .filter(Boolean);
+  const symbol = (searchParams.get("symbol") || "").trim().toUpperCase();
+  const interval = (
+    (searchParams.get("interval") || "D").trim().toUpperCase() as
+      | "D"
+      | "W"
+      | "M"
+  );
 
-  if (symbols.length === 0) {
-    return NextResponse.json({
-      quotes: {},
-      debug: {},
-      providers: {},
-      marketContext: buildMarketContext([]),
-    });
+  if (!symbol) {
+    return NextResponse.json(
+      { error: "Missing symbol parameter." },
+      { status: 400 },
+    );
   }
 
-  const quotes: Record<string, AppQuote> = {};
-  const debug: Record<string, string> = {};
-  const providers: Record<string, string> = {};
-  const successResults: FetchSuccess[] = [];
+  const result = await fetchOne(symbol, interval);
 
-  for (const symbol of symbols) {
-    const result = await fetchOne(symbol);
-
-    if (result.ok) {
-      quotes[symbol] = result.quote;
-      providers[symbol] = result.providerLabel;
-      successResults.push(result);
-
-      const fallbackNotes = result.attempted.filter((line) => !line.endsWith("ok"));
-      if (fallbackNotes.length > 0) {
-        debug[symbol] = fallbackNotes.join(" | ");
-      }
-    } else {
-      debug[symbol] = result.attempted.join(" | ") || result.reason;
-    }
+  if (!result.ok) {
+    return NextResponse.json(
+      {
+        error: result.reason,
+        debug: result.attempted,
+        symbol,
+        interval,
+      },
+      { status: 429 },
+    );
   }
+
+  const fallbackNotes = result.attempted.filter((line) => !line.endsWith("ok"));
 
   return NextResponse.json({
-    quotes,
-    debug,
-    providers,
-    marketContext: buildMarketContext(successResults),
+    symbol,
+    interval,
+    provider: result.provider,
+    providerLabel: result.providerLabel,
+    latestTradingDate: result.latestTradingDate,
+    candles: result.candles,
+    debug: fallbackNotes,
   });
 }
