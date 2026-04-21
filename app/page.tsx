@@ -20,6 +20,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import CandlesPanel from "@/components/candles-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -389,7 +390,10 @@ function isWrappedQuoteResponse(
   return (
     typeof payload === "object" &&
     payload !== null &&
-    ("quotes" in payload || "debug" in payload || "error" in payload || "marketContext" in payload)
+    ("quotes" in payload ||
+      "debug" in payload ||
+      "error" in payload ||
+      "marketContext" in payload)
   );
 }
 
@@ -466,6 +470,9 @@ export default function ETFOrderDashboard() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [dialogOpen, setDialogOpen] = useState<boolean>(false);
   const [editingSymbol, setEditingSymbol] = useState<string | null>(null);
+  const [selectedSymbol, setSelectedSymbol] = useState<string>(
+    initial.watchlist[0]?.symbol ?? "ITA",
+  );
   const [form, setForm] = useState<FormState>({
     symbol: "",
     name: "",
@@ -478,6 +485,12 @@ export default function ETFOrderDashboard() {
   useEffect(() => {
     saveState(watchlist, settings);
   }, [watchlist, settings]);
+
+  useEffect(() => {
+    if (!watchlist.some((item) => item.symbol === selectedSymbol)) {
+      setSelectedSymbol(watchlist[0]?.symbol ?? "");
+    }
+  }, [watchlist, selectedSymbol]);
 
   async function refreshQuotes(force = false): Promise<void> {
     setLoading(true);
@@ -652,6 +665,10 @@ export default function ETFOrderDashboard() {
       return [...prev, payload];
     });
 
+    if (!selectedSymbol) {
+      setSelectedSymbol(payload.symbol);
+    }
+
     setDialogOpen(false);
   }
 
@@ -821,6 +838,8 @@ export default function ETFOrderDashboard() {
           />
         </section>
 
+        {selectedSymbol ? <CandlesPanel symbol={selectedSymbol} /> : null}
+
         <Card className="rounded-3xl border-slate-200 shadow-sm">
           <CardContent className="p-5">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
@@ -830,7 +849,7 @@ export default function ETFOrderDashboard() {
                   {marketContext?.latestTradingDate ?? "—"}
                 </div>
                 <div className="mt-2 text-slate-500">
-                  目前畫面資料所對應的前次交易日日期
+                  目前畫面資料對應的前次交易日日期
                 </div>
               </div>
 
@@ -907,8 +926,20 @@ export default function ETFOrderDashboard() {
                         return (
                           <tr key={item.symbol} className="border-b border-slate-100">
                             <td className="py-4 pr-4 align-top">
-                              <div className="font-semibold">{item.symbol}</div>
-                              <div className="text-sm text-slate-500 max-w-[260px]">{item.name}</div>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedSymbol(item.symbol)}
+                                className={`font-semibold ${
+                                  selectedSymbol === item.symbol
+                                    ? "text-slate-900 underline"
+                                    : "text-slate-700 hover:underline"
+                                }`}
+                              >
+                                {item.symbol}
+                              </button>
+                              <div className="text-sm text-slate-500 max-w-[260px]">
+                                {item.name}
+                              </div>
                             </td>
 
                             <td className="py-4 pr-4">
@@ -927,13 +958,17 @@ export default function ETFOrderDashboard() {
 
                             <td className="py-4 pr-4">${formatNumber(item.targetBuy)}</td>
                             <td className="py-4 pr-4">{item.shares}</td>
-                            <td className="py-4 pr-4">{amount ? `$${formatNumber(amount)}` : "—"}</td>
+                            <td className="py-4 pr-4">
+                              {amount ? `$${formatNumber(amount)}` : "—"}
+                            </td>
 
                             <td className="py-4 pr-4">
                               {quote ? (
                                 <span
                                   className={`inline-flex items-center gap-1 ${
-                                    quote.changePct >= 0 ? "text-emerald-700" : "text-rose-700"
+                                    quote.changePct >= 0
+                                      ? "text-emerald-700"
+                                      : "text-rose-700"
                                   }`}
                                 >
                                   {quote.changePct >= 0 ? (
@@ -993,7 +1028,11 @@ export default function ETFOrderDashboard() {
                 const Icon = item.signal.icon;
 
                 return (
-                  <motion.div key={item.symbol} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+                  <motion.div
+                    key={item.symbol}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                  >
                     <Card className="rounded-3xl border-slate-200 shadow-sm h-full">
                       <CardHeader>
                         <div className="flex items-start justify-between gap-4">
@@ -1004,7 +1043,9 @@ export default function ETFOrderDashboard() {
                                 {item.category}
                               </Badge>
                             </CardTitle>
-                            <CardDescription className="mt-1">{item.name}</CardDescription>
+                            <CardDescription className="mt-1">
+                              {item.name}
+                            </CardDescription>
                           </div>
 
                           <div
@@ -1018,10 +1059,22 @@ export default function ETFOrderDashboard() {
 
                       <CardContent className="space-y-4">
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          <Metric label="前次收盤" value={item.quote ? `$${formatNumber(item.quote.price)}` : "—"} />
-                          <Metric label="理想買點" value={`$${formatNumber(item.targetBuy)}`} />
-                          <Metric label="預計股數" value={String(item.shares)} />
-                          <Metric label="預估成交金額" value={item.amount ? `$${formatNumber(item.amount)}` : "—"} />
+                          <Metric
+                            label="前次收盤"
+                            value={item.quote ? `$${formatNumber(item.quote.price)}` : "—"}
+                          />
+                          <Metric
+                            label="理想買點"
+                            value={`$${formatNumber(item.targetBuy)}`}
+                          />
+                          <Metric
+                            label="預計股數"
+                            value={String(item.shares)}
+                          />
+                          <Metric
+                            label="預估成交金額"
+                            value={item.amount ? `$${formatNumber(item.amount)}` : "—"}
+                          />
                         </div>
 
                         <Separator />
@@ -1033,19 +1086,36 @@ export default function ETFOrderDashboard() {
                           />
                           <Metric
                             label="距離理想買點"
-                            value={item.gapPct !== null ? `${formatNumber(item.gapPct)}%` : "—"}
+                            value={
+                              item.gapPct !== null
+                                ? `${formatNumber(item.gapPct)}%`
+                                : "—"
+                            }
                           />
                           <Metric
                             label="前次交易日漲跌"
-                            value={item.quote ? `${formatNumber(item.quote.changePct)}%` : "—"}
+                            value={
+                              item.quote
+                                ? `${formatNumber(item.quote.changePct)}%`
+                                : "—"
+                            }
                           />
-                          <Metric label="訊號分數" value={String(item.signal.score)} />
+                          <Metric
+                            label="訊號分數"
+                            value={String(item.signal.score)}
+                          />
                         </div>
 
                         <div className="rounded-2xl bg-slate-50 p-4 text-sm text-slate-600 leading-6">
-                          <div className="font-medium text-slate-900 mb-1">判斷原因</div>
+                          <div className="font-medium text-slate-900 mb-1">
+                            判斷原因
+                          </div>
                           <div>{item.signal.reason}</div>
-                          {item.note ? <div className="mt-2 text-slate-500">你的備註：{item.note}</div> : null}
+                          {item.note ? (
+                            <div className="mt-2 text-slate-500">
+                              你的備註：{item.note}
+                            </div>
+                          ) : null}
                         </div>
                       </CardContent>
                     </Card>
@@ -1063,7 +1133,9 @@ export default function ETFOrderDashboard() {
                     <Settings2 className="h-5 w-5" />
                     規則設定
                   </CardTitle>
-                  <CardDescription>這些規則會直接影響是否適合下單的判斷。</CardDescription>
+                  <CardDescription>
+                    這些規則會直接影響是否適合下單的判斷。
+                  </CardDescription>
                 </CardHeader>
 
                 <CardContent className="space-y-5">
@@ -1073,7 +1145,10 @@ export default function ETFOrderDashboard() {
                       <Input
                         value={settings.marketWindowStart}
                         onChange={(e) =>
-                          setSettings({ ...settings, marketWindowStart: e.target.value })
+                          setSettings({
+                            ...settings,
+                            marketWindowStart: e.target.value,
+                          })
                         }
                       />
                     </div>
@@ -1083,7 +1158,10 @@ export default function ETFOrderDashboard() {
                       <Input
                         value={settings.marketWindowEnd}
                         onChange={(e) =>
-                          setSettings({ ...settings, marketWindowEnd: e.target.value })
+                          setSettings({
+                            ...settings,
+                            marketWindowEnd: e.target.value,
+                          })
                         }
                       />
                     </div>
@@ -1178,7 +1256,9 @@ export default function ETFOrderDashboard() {
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="font-medium text-slate-900 mb-2">目前資料模式</div>
+                    <div className="font-medium text-slate-900 mb-2">
+                      目前資料模式
+                    </div>
                     <ol className="list-decimal pl-5 space-y-1">
                       <li>抓取最新可得的交易日收盤資料。</li>
                       <li>週一早上會顯示上週五資料。</li>
@@ -1188,8 +1268,12 @@ export default function ETFOrderDashboard() {
                   </div>
 
                   <div className="rounded-2xl bg-slate-50 p-4">
-                    <div className="font-medium text-slate-900 mb-2">建議使用方式</div>
-                    <div>每天早上或中午打開一次即可，不需要熬夜盯盤，也不建議反覆連按刷新。</div>
+                    <div className="font-medium text-slate-900 mb-2">
+                      建議使用方式
+                    </div>
+                    <div>
+                      每天早上或中午打開一次即可，不需要熬夜盯盤，也不建議反覆連按刷新。
+                    </div>
                   </div>
                 </CardContent>
               </Card>
