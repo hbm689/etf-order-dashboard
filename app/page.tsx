@@ -112,7 +112,17 @@ type SignalResult = {
   reason: string;
 };
 
-const STORAGE_KEY = "etf_order_dashboard_structure_v2";
+type EnrichedWatchItem = {
+  item: WatchItem;
+  quote?: AppQuote;
+  structure: StructureSnapshot | null | undefined;
+  signal: SignalResult;
+  provider: string;
+  estimatedAmount: number | null;
+  spreadPct: number | null;
+};
+
+const STORAGE_KEY = "etf_order_dashboard_structure_v3";
 
 const DEFAULT_SETTINGS: Settings = {
   marketWindowStart: "22:00",
@@ -553,6 +563,52 @@ function inReviewWindow(start: string, end: string): boolean {
   return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
 }
 
+function getBuyZone(targetBuy: number, acceptableGapPct: number) {
+  const delta = targetBuy * (acceptableGapPct / 100);
+  return {
+    low: Math.max(0, targetBuy - delta),
+    high: targetBuy + delta,
+  };
+}
+
+function buildSidebarLearningText(
+  entry: EnrichedWatchItem | null,
+  settings: Settings,
+  marketContext: MarketContext,
+): string {
+  if (!entry) {
+    return "請先從右側快速頁簽或觀察名單選擇一檔標的。";
+  }
+
+  const dataDate =
+    entry.quote?.tradingDate ||
+    marketContext.latestTradingDate ||
+    entry.structure?.latestTradingDate ||
+    "—";
+
+  const prevClose = entry.quote?.previousClose;
+  const { low, high } = getBuyZone(entry.item.targetBuy, settings.acceptableGapPct);
+
+  let priceRelation =
+    "前次收盤目前尚無法與理想買點區間比對，代表資料還不完整。";
+
+  if (prevClose !== undefined && prevClose !== null) {
+    if (prevClose < low) {
+      priceRelation = `前次收盤 ${formatCurrency(prevClose)} 低於理想買點下緣 ${formatCurrency(low)}，價格雖然更便宜，但也要同步確認不是因為結構轉弱。`;
+    } else if (prevClose > high) {
+      priceRelation = `前次收盤 ${formatCurrency(prevClose)} 高於理想買點上緣 ${formatCurrency(high)}，表示目前仍略高於你預設的舒服布局區。`;
+    } else {
+      priceRelation = `前次收盤 ${formatCurrency(prevClose)} 已進入理想買點區間 ${formatCurrency(low)} ～ ${formatCurrency(high)}，價格位置開始接近你設定的進場帶。`;
+    }
+  }
+
+  const riskText = entry.structure
+    ? `目前風險等級為「${entry.structure.riskLevel}」，代表你在看買點時，不只要看價格，也要把型態與結構一起考慮。`
+    : "目前尚未取得完整結構資料，因此風險等級仍待確認。";
+
+  return `資料日期 ${dataDate} 代表這次複盤對應的是哪一個美股交易日，先確認不是休市或舊資料。${priceRelation} 理想買點區間是依你設定的目標價 ${formatCurrency(entry.item.targetBuy)} 與可接受偏離 ${settings.acceptableGapPct.toFixed(2)}% 推算出的最低與最高範圍。${riskText}`;
+}
+
 export default function Page() {
   const [watchlist, setWatchlist] = useState<WatchItem[]>(DEFAULT_WATCHLIST);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -672,7 +728,7 @@ export default function Page() {
     };
   }, [watchlist, hydrated, refreshTick]);
 
-  const enrichedItems = useMemo(() => {
+  const enrichedItems: EnrichedWatchItem[] = useMemo(() => {
     return watchlist.map((item) => {
       const quote = quotes[item.symbol];
       const structure = structures[item.symbol];
@@ -700,6 +756,16 @@ export default function Page() {
 
   const selectedEntry =
     enrichedItems.find((entry) => entry.item.symbol === activeSymbol) ?? enrichedItems[0] ?? null;
+
+  const selectedBuyZone = selectedEntry
+    ? getBuyZone(selectedEntry.item.targetBuy, settings.acceptableGapPct)
+    : null;
+
+  const sidebarLearningText = buildSidebarLearningText(
+    selectedEntry,
+    settings,
+    marketContext,
+  );
 
   const candidateCount = enrichedItems.filter(
     (entry) => entry.signal.label === "可考慮下單",
@@ -790,7 +856,7 @@ export default function Page() {
             </h1>
 
             <p className="mt-4 text-lg leading-8 text-slate-600">
-              這個版本已改成複盤工作台模式。左側專注看 K 線與結構，右側直接點選觀察名單，就能同步切換圖表、數值與下單訊號。
+              這個版本已改成複盤工作台模式。左側專注看 K 線與結構，右側直接點選觀察名單或快速頁簽，就能同步切換圖表與關鍵資訊。
             </p>
           </div>
 
@@ -932,7 +998,7 @@ export default function Page() {
                     工作台說明
                   </div>
                   <div className="mt-2 text-sm leading-7 text-slate-600">
-                    右側點選任何一檔，左側會同步切換 K 線、技術結構與相關數值，不必再上下捲動找清單。
+                    右側上方可直接用快速頁簽切換標的；資訊卡只保留最重要的四項資訊，降低雜訊。
                   </div>
                 </div>
               </CardContent>
@@ -942,7 +1008,28 @@ export default function Page() {
           <div className="space-y-5 xl:sticky xl:top-4 self-start">
             <Card className="rounded-3xl border-slate-200 shadow-sm">
               <CardContent className="p-5">
-                <div className="flex items-start justify-between gap-4">
+                <div className="text-sm text-slate-500">快速頁簽</div>
+                <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+                  {enrichedItems.map((entry) => {
+                    const active = entry.item.symbol === activeSymbol;
+                    return (
+                      <button
+                        key={entry.item.symbol}
+                        type="button"
+                        onClick={() => setActiveSymbol(entry.item.symbol)}
+                        className={`whitespace-nowrap rounded-full border px-4 py-2 text-sm font-medium transition ${
+                          active
+                            ? "border-slate-900 bg-slate-900 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                        }`}
+                      >
+                        {entry.item.symbol}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-5 flex items-start justify-between gap-4">
                   <div>
                     <div className="text-sm text-slate-500">目前選中標的</div>
                     <div className="mt-2 text-3xl font-black tracking-tight">
@@ -966,43 +1053,48 @@ export default function Page() {
 
                 {selectedEntry ? (
                   <>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant="outline" className="rounded-full">
-                        {selectedEntry.item.theme}
-                      </Badge>
-                      <Badge variant="outline" className="rounded-full">
-                        {selectedEntry.provider}
-                      </Badge>
-                      {selectedEntry.structure ? (
-                        <Badge variant="outline" className="rounded-full">
-                          {selectedEntry.structure.pattern}
-                        </Badge>
-                      ) : null}
-                    </div>
-
                     <div className={`mt-4 rounded-2xl border p-4 text-sm leading-7 ${toneClasses(selectedEntry.signal.tone)}`}>
                       {selectedEntry.signal.reason}
                     </div>
 
                     <div className="mt-4 grid grid-cols-2 gap-3">
-                      <SidebarMetric label="資料日期" value={selectedEntry.quote?.tradingDate || marketContext.latestTradingDate || "—"} />
-                      <SidebarMetric label="前次收盤" value={formatCurrency(selectedEntry.quote?.previousClose)} />
-                      <SidebarMetric label="理想買點" value={formatCurrency(selectedEntry.item.targetBuy)} />
-                      <SidebarMetric label="預估金額" value={formatCurrency(selectedEntry.estimatedAmount)} />
-                      <SidebarMetric label="前次交易日漲跌" value={formatPercent(selectedEntry.quote?.changePct)} />
-                      <SidebarMetric label="成交量" value={formatInteger(selectedEntry.quote?.volume)} />
-                      <SidebarMetric label="區間位置" value={selectedEntry.structure?.zone || "—"} />
-                      <SidebarMetric label="風險等級" value={selectedEntry.structure?.riskLevel || "—"} />
+                      <KeyMetric
+                        label="資料日期"
+                        value={
+                          selectedEntry.quote?.tradingDate ||
+                          marketContext.latestTradingDate ||
+                          selectedEntry.structure?.latestTradingDate ||
+                          "—"
+                        }
+                      />
+                      <KeyMetric
+                        label="前次收盤"
+                        value={formatCurrency(selectedEntry.quote?.previousClose)}
+                      />
+                      <KeyMetric
+                        label="理想買點區間"
+                        value={
+                          selectedBuyZone
+                            ? `${formatCurrency(selectedBuyZone.low)} ～ ${formatCurrency(
+                                selectedBuyZone.high,
+                              )}`
+                            : "—"
+                        }
+                        note={`目標 ${formatCurrency(selectedEntry.item.targetBuy)}`}
+                      />
+                      <KeyMetric
+                        label="風險等級"
+                        value={selectedEntry.structure?.riskLevel || "—"}
+                        note={selectedEntry.structure?.pattern || "—"}
+                      />
                     </div>
 
-                    {selectedEntry.structure ? (
-                      <div className="mt-4 rounded-2xl bg-slate-50 p-4">
-                        <div className="text-sm font-medium text-slate-900">學習解讀</div>
-                        <div className="mt-2 text-sm leading-7 text-slate-600">
-                          {selectedEntry.structure.watchText}
-                        </div>
+                    <div className="mt-4 rounded-2xl bg-slate-50 p-4">
+                      <div className="text-sm font-medium text-slate-900">學習解讀</div>
+                      <div className="mt-2 text-sm leading-7 text-slate-600">
+                        {sidebarLearningText}
                       </div>
-                    ) : null}
+                    </div>
 
                     <div className="mt-4 flex gap-2">
                       <Button
@@ -1084,13 +1176,6 @@ export default function Page() {
                             }`}>
                               {entry.provider}
                             </span>
-                            {entry.structure ? (
-                              <span className={`rounded-full border px-2 py-1 text-xs ${
-                                active ? "border-white/20 text-white" : "border-slate-200 text-slate-600"
-                              }`}>
-                                {entry.structure.pattern}
-                              </span>
-                            ) : null}
                           </div>
 
                           <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
@@ -1232,17 +1317,22 @@ function MiniContextCard({
   );
 }
 
-function SidebarMetric({
+function KeyMetric({
   label,
   value,
+  note,
 }: {
   label: string;
   value: string;
+  note?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
       <div className="text-xs text-slate-500">{label}</div>
-      <div className="mt-1 text-lg font-semibold text-slate-900">{value}</div>
+      <div className="mt-2 text-2xl font-black tracking-tight text-slate-900">
+        {value}
+      </div>
+      {note ? <div className="mt-2 text-xs text-slate-500">{note}</div> : null}
     </div>
   );
 }
@@ -1257,9 +1347,11 @@ function ListMetric({
   value: string;
 }) {
   return (
-    <div className={`rounded-2xl border p-3 ${
-      active ? "border-white/15 bg-white/5" : "border-slate-200 bg-slate-50"
-    }`}>
+    <div
+      className={`rounded-2xl border p-3 ${
+        active ? "border-white/15 bg-white/5" : "border-slate-200 bg-slate-50"
+      }`}
+    >
       <div className={`text-xs ${active ? "text-slate-200" : "text-slate-500"}`}>
         {label}
       </div>
